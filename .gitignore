@@ -1,0 +1,17 @@
+venv/
+__pycache__/
+*.pyc
+*.pyo
+.Python
+build/
+dist/
+*.egg-info/
+.pytest_cache/
+.DS_Store
+.mmaps_server.pid
+
+# Local-only notes / agent context — never publish
+CLAUDE.md
+Claude.md
+BUGS.md
+BUGS2.md

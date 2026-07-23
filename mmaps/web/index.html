@@ -1,0 +1,1771 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>M Maps</title>
+
+  <!--
+    Outbound network requests all happen HERE in the browser, not in the M Maps
+    backend (which only ever talks to your phone):
+      - MapLibre GL JS from a CDN (pinned version),
+      - vector map styles/tiles from OpenFreeMap (tiles.openfreemap.org) —
+        free, unlimited, no API key; OpenMapTiles schema + OSM data,
+      - road routes from the public OSRM demo API (router.project-osrm.org),
+      - place search: the page calls our local GET /geocode, which proxies
+        Nominatim (no key; personal use; proper User-Agent). Explicit Search /
+        Enter only. Raw coordinates are parsed in the browser (no network).
+    Search only finds and shows a place — the phone never moves until the user
+    clicks "Move here". The control page is usually localhost; with serve --lan
+    it is also reachable from other devices on the same Wi-Fi.
+  -->
+  <link href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet" />
+  <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+
+  <style>
+    :root {
+      --bg: #0b0e14;
+      --panel: #141a23;
+      --panel-2: #1b2430;
+      --border: #273140;
+      --text: #e6edf3;
+      --muted: #90a0b3;
+      --accent: #3b82f6;
+      --fly: #2dd4bf;
+      --danger: #ef4444;
+      --ok: #22c55e;
+      --warn: #f59e0b;
+      --radius: 10px;
+      --shadow: 0 10px 30px rgba(0,0,0,0.45);
+      --safe-top: env(safe-area-inset-top, 0px);
+      --safe-bottom: env(safe-area-inset-bottom, 0px);
+      --safe-left: env(safe-area-inset-left, 0px);
+      --safe-right: env(safe-area-inset-right, 0px);
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; height: 100%; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; }
+    body {
+      display: flex; flex-direction: column; background: var(--bg); color: var(--text);
+      -webkit-font-smoothing: antialiased;
+      padding-top: var(--safe-top); padding-left: var(--safe-left); padding-right: var(--safe-right);
+    }
+
+    /* ---- Header / status bar ------------------------------------------- */
+    header {
+      display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+      padding: 10px 16px; background: var(--panel); border-bottom: 1px solid var(--border);
+    }
+    .brand { font-weight: 650; font-size: 15px; letter-spacing: 0.2px; white-space: nowrap; }
+    .sep { width: 1px; height: 22px; background: var(--border); flex-shrink: 0; }
+    .chips { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; min-width: 0; flex: 1 1 auto; }
+    .chip {
+      display: inline-flex; align-items: center; gap: 6px;
+      background: var(--panel-2); border: 1px solid var(--border); border-radius: 999px;
+      padding: 4px 10px; font-size: 12.5px; color: var(--muted); white-space: nowrap;
+    }
+    .chip b { color: var(--text); font-weight: 600; }
+    .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); flex-shrink: 0; }
+    .dot.ok { background: var(--ok); } .dot.warn { background: var(--warn); } .dot.err { background: var(--danger); }
+    .spacer { flex: 1; min-width: 8px; }
+    .headerActions { display: flex; gap: 8px; align-items: center; flex-shrink: 0; }
+    #styleSelect {
+      font: inherit; font-size: 12.5px; font-weight: 600; color: var(--text);
+      background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px;
+      padding: 7px 10px; max-width: 140px; cursor: pointer;
+    }
+    /* Compact Normal / 3D camera toggle (independent of color style). */
+    #viewSeg.seg button {
+      padding: 7px 10px; font-size: 12px;
+    }
+
+    /* ---- Control bar: search + mode + speed ---------------------------- */
+    #controls {
+      display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+      padding: 10px 16px; background: var(--panel); border-bottom: 1px solid var(--border);
+    }
+    .controlGroup {
+      display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-width: 0;
+    }
+    .controlGroup .tlabel { flex-shrink: 0; }
+
+    .searchWrap { position: relative; flex: 1 1 220px; min-width: 160px; max-width: 420px; }
+    .searchRow { display: flex; gap: 6px; align-items: stretch; }
+    .searchRow input {
+      flex: 1; min-width: 0;
+      font: inherit; font-size: 13px; color: var(--text);
+      background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px;
+      padding: 8px 11px;
+    }
+    .searchRow input::placeholder { color: var(--muted); }
+    .searchRow input:focus { outline: none; border-color: var(--accent); }
+    #searchResults {
+      display: none; position: absolute; left: 0; right: 0; top: calc(100% + 4px);
+      z-index: 20; max-height: 240px; overflow: auto;
+      background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius);
+      box-shadow: var(--shadow);
+    }
+    #searchResults button {
+      display: block; width: 100%; text-align: left; border: none; border-radius: 0;
+      border-bottom: 1px solid var(--border); background: transparent;
+      padding: 10px 12px; font-weight: 500; font-size: 12.5px; line-height: 1.35;
+      color: var(--text); cursor: pointer;
+    }
+    #searchResults button:last-child { border-bottom: none; }
+    #searchResults button:hover { background: var(--panel-2); }
+    #searchResults .name { font-weight: 600; }
+    #searchResults .sub { color: var(--muted); font-size: 11.5px; margin-top: 2px; }
+    #searchResults .empty { padding: 12px; font-size: 12.5px; color: var(--muted); }
+
+    /* Segmented mode control — room for multi-stop / joystick later */
+    .seg {
+      display: inline-flex; flex-wrap: wrap; gap: 0;
+      background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px;
+      overflow: hidden;
+    }
+    .seg button {
+      border: none !important; border-radius: 0; background: transparent;
+      border-right: 1px solid var(--border) !important; padding: 8px 12px;
+      font-size: 12.5px; font-weight: 600; color: var(--muted);
+      cursor: pointer; user-select: none; -webkit-user-select: none;
+    }
+    .seg button:last-child { border-right: none !important; }
+    .seg button:hover { color: var(--text); background: rgba(255,255,255,0.06); }
+    .seg button.active,
+    .seg button.active:hover {
+      background: var(--accent) !important; color: #fff !important;
+    }
+    .seg button:disabled {
+      opacity: 0.45; cursor: default; color: var(--muted);
+    }
+    .seg button:disabled:hover { background: transparent; color: var(--muted); }
+
+    #speedGroup { display: none; }
+    #speedGroup.visible { display: flex; }
+    #tripGroup { display: none; flex: 1 1 100%; align-items: flex-start; gap: 10px; flex-wrap: wrap; }
+    #tripGroup.visible { display: flex; }
+    #tripList {
+      flex: 1 1 200px; min-width: 160px; max-width: 420px;
+      background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px;
+      padding: 8px 10px; font-size: 12.5px; color: var(--muted);
+      max-height: 120px; overflow: auto;
+    }
+    #tripList ol { margin: 0; padding-left: 0; list-style: none; }
+    #tripList li { color: var(--text); margin: 3px 0; line-height: 1.3; }
+    #tripList .empty { color: var(--muted); font-style: normal; }
+    #tripList .legtag {
+      display: inline-block; font-size: 10px; font-weight: 700; text-transform: uppercase;
+      letter-spacing: 0.4px; padding: 1px 6px; border-radius: 999px; margin-left: 6px;
+      vertical-align: middle;
+    }
+    #tripList .legtag.fly { background: rgba(45,212,191,0.2); color: var(--fly); }
+    #tripList .legtag.drive { background: rgba(59,130,246,0.2); color: var(--accent); }
+    #tripActions { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+    .stop-marker {
+      width: 26px; height: 26px; border-radius: 50%;
+      background: var(--warn); color: #1a1200; font: 700 12px/26px -apple-system, system-ui, sans-serif;
+      text-align: center; border: 2px solid #fff; box-shadow: 0 2px 8px rgba(0,0,0,0.35);
+      cursor: default; user-select: none;
+    }
+    .stop-marker.airport {
+      background: var(--fly); color: #04211d;
+    }
+    #spoofChip { display: none; }
+    /* Keep control bar above the map so clicks never fall through. */
+    #controls { position: relative; z-index: 20; }
+
+    /* ---- Buttons ------------------------------------------------------- */
+    button {
+      font: inherit; font-size: 13px; font-weight: 600; line-height: 1;
+      border: 1px solid var(--border); background: var(--panel-2); color: var(--text);
+      padding: 8px 13px; border-radius: 8px; cursor: pointer; transition: border-color .12s, background .12s;
+      -webkit-tap-highlight-color: transparent;
+    }
+    button:hover { border-color: var(--muted); }
+    button:disabled { opacity: 0.4; cursor: default; }
+    button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+    button.danger { background: transparent; border-color: var(--danger); color: #fca5a5; }
+    button.danger:hover { background: rgba(239,68,68,0.12); }
+    /* Opaque ghost so Cancel stays legible on light map tiles. */
+    button.ghost {
+      background: var(--panel-2); border-color: var(--border); color: var(--text);
+    }
+    button.ghost:hover { border-color: var(--muted); }
+
+    #map { flex: 1; position: relative; min-height: 0; }
+
+    /* ---- Banners ------------------------------------------------------- */
+    #lanBanner {
+      display: none; padding: 8px 16px; font-size: 12.5px; line-height: 1.35;
+      background: rgba(239,68,68,0.14); color: #fecaca; border-bottom: 1px solid rgba(239,68,68,0.35);
+    }
+    #lanBanner b { color: #fff; font-weight: 650; }
+    /* Device-confirm prompt: same visual weight as color-coded banners. */
+    #devicePrompt {
+      display: none; padding: 10px 16px;
+      background: rgba(59,130,246,0.12); border-bottom: 1px solid rgba(59,130,246,0.4);
+    }
+    #devicePrompt .devicePromptInner {
+      display: flex; align-items: flex-start; gap: 12px;
+    }
+    #devicePrompt .devicePromptIcon {
+      flex-shrink: 0; width: 10px; height: 10px; margin-top: 5px; border-radius: 50%;
+      background: var(--accent); box-shadow: 0 0 0 3px rgba(59,130,246,0.28);
+    }
+    #devicePrompt .devicePromptBody { flex: 1; min-width: 0; }
+    #devicePrompt #devicePromptText {
+      font-size: 13px; color: var(--text); line-height: 1.4; margin-bottom: 8px;
+    }
+    #devicePrompt .devicePromptActions { display: flex; gap: 8px; flex-wrap: wrap; }
+    #banner {
+      display: none; padding: 9px 16px; font-size: 13px;
+      background: rgba(245,158,11,0.12); color: #f5d38a; border-bottom: 1px solid rgba(245,158,11,0.3);
+    }
+    /* Fatal errors use danger red; advisories stay amber. */
+    #banner.banner-error {
+      background: rgba(239,68,68,0.16); color: #fecaca; border-bottom-color: rgba(239,68,68,0.4);
+    }
+    #banner.banner-warn {
+      background: rgba(245,158,11,0.12); color: #f5d38a; border-bottom-color: rgba(245,158,11,0.3);
+    }
+
+    .tlabel { font-size: 11px; text-transform: uppercase; letter-spacing: 0.6px; color: var(--muted); }
+
+    /* ---- Bottom-center cards ------------------------------------------- */
+    .floatCenter {
+      position: absolute; bottom: calc(20px + var(--safe-bottom)); left: 50%;
+      transform: translateX(-50%); z-index: 5; max-width: min(440px, calc(100vw - 24px));
+    }
+    #hint {
+      background: rgba(20,26,35,0.92); border: 1px solid var(--border);
+      padding: 7px 14px; border-radius: 999px; font-size: 13px; color: var(--muted);
+      pointer-events: none; white-space: nowrap; text-align: center;
+    }
+    /* Shared card chrome for find + go panels. */
+    #findPanel, #goPanel {
+      display: none; background: var(--panel); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 13px 15px; box-shadow: var(--shadow);
+      width: max-content; max-width: min(440px, calc(100vw - 24px));
+    }
+    #findPanel .title, #goPanel .title {
+      font-size: 13px; color: var(--muted); margin-bottom: 10px; line-height: 1.35;
+    }
+    #findPanel .title b, #goPanel .title b { color: var(--text); }
+    #findPanel .actions, #goPanel .actions {
+      display: flex; gap: 8px; flex-wrap: wrap; align-items: center;
+    }
+
+    #moveBar {
+      display: none; align-items: center; gap: 14px;
+      background: var(--panel); border: 1px solid var(--border); border-radius: 999px;
+      padding: 8px 8px 8px 16px; box-shadow: var(--shadow);
+    }
+    #moveBar .label { font-size: 13px; color: var(--text); }
+    #moveBar .label b { color: var(--accent); }
+
+    @media (max-width: 720px) {
+      header { gap: 8px 10px; padding: 8px 10px; align-items: flex-start; }
+      .sep { display: none; }
+      .brand { font-size: 14px; padding-top: 6px; }
+      .chips { order: 3; flex: 1 1 100%; width: 100%; gap: 6px; }
+      .chip { font-size: 11.5px; padding: 3px 8px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+      .spacer { display: none; }
+      .headerActions { margin-left: auto; gap: 6px; }
+      .headerActions button { font-size: 12px; padding: 8px 10px; min-height: 36px; }
+
+      #controls { padding: 8px 10px; gap: 10px; }
+      .searchWrap { flex: 1 1 100%; max-width: none; }
+      .controlGroup { width: 100%; }
+      #speedSeg { flex-wrap: wrap; }
+
+      #lanBanner, #banner { padding: 8px 10px; font-size: 12px; }
+      .floatCenter {
+        left: 10px; right: 10px; transform: none;
+        max-width: none; width: auto;
+        bottom: calc(12px + var(--safe-bottom));
+      }
+      #hint { white-space: normal; border-radius: 10px; padding: 8px 12px; font-size: 12.5px; }
+      #findPanel, #goPanel { width: 100%; max-width: none; }
+      #findPanel .actions button, #goPanel .actions button { flex: 1 1 auto; min-height: 40px; }
+      #moveBar {
+        width: 100%; border-radius: var(--radius);
+        justify-content: space-between; padding: 8px 8px 8px 12px;
+      }
+      .maplibregl-ctrl-bottom-right { bottom: 4px !important; right: 4px !important; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <span class="brand">M Maps</span>
+    <div class="sep"></div>
+    <div class="chips">
+      <span class="chip"><span id="deviceDot" class="dot"></span><b id="deviceName">connecting</b><span id="iosVersion"></span></span>
+      <span class="chip">Developer Mode <b id="devMode">—</b></span>
+      <span class="chip">State <b id="state">—</b></span>
+      <span class="chip" id="spoofChip">Spoof <b id="spoofState">not spoofing</b></span>
+      <span class="chip" id="coordsChip" style="display:none">Location <b id="coords"></b></span>
+    </div>
+    <div class="spacer"></div>
+    <div class="headerActions">
+      <label class="tlabel" for="styleSelect" style="margin:0">Style</label>
+      <select id="styleSelect" aria-label="Map style" title="OpenFreeMap basemap colors">
+        <option value="liberty">Liberty</option>
+        <option value="bright">Bright</option>
+        <option value="positron">Positron</option>
+        <option value="dark">Dark</option>
+        <option value="fiord">Fiord</option>
+      </select>
+      <label class="tlabel" style="margin:0">View</label>
+      <div class="seg" id="viewSeg" role="group" aria-label="Map view">
+        <button type="button" data-view="normal" class="active">Normal</button>
+        <button type="button" data-view="3d">3D</button>
+      </div>
+      <div class="sep" aria-hidden="true"></div>
+      <button id="stopBtn" class="danger" disabled>Stop &amp; restore GPS</button>
+    </div>
+  </header>
+
+  <div id="controls">
+    <div class="searchWrap">
+      <div class="searchRow">
+        <input id="searchInput" type="search" placeholder="Place or coords (Paris · 48.86, 2.29)" autocomplete="off" spellcheck="false" />
+        <button id="searchBtn" class="primary" type="button">Search</button>
+      </div>
+      <div id="searchResults" role="listbox"></div>
+    </div>
+
+    <div class="controlGroup" title="How you move">
+      <span class="tlabel">Mode</span>
+      <div class="seg" id="modeSeg" role="group" aria-label="Movement mode">
+        <button type="button" data-mode="teleport" class="active">Teleport</button>
+        <button type="button" data-mode="route">Route</button>
+        <button type="button" data-mode="multistop">Multi-stop</button>
+        <!-- Joystick: later. -->
+      </div>
+    </div>
+
+    <div class="controlGroup" id="speedGroup" title="How fast you travel along the route">
+      <span class="tlabel">Speed</span>
+      <!-- Same segmented idiom as Mode (not a native select). -->
+      <div class="seg" id="speedSeg" role="group" aria-label="Route speed">
+        <button type="button" data-speed="walk">Walk</button>
+        <button type="button" data-speed="bicycle">Bicycle</button>
+        <button type="button" data-speed="motorcycle">Motorcycle</button>
+        <button type="button" data-speed="car" class="active">Car</button>
+        <button type="button" data-speed="fly">Fly</button>
+      </div>
+    </div>
+
+    <div class="controlGroup" id="tripGroup" title="Multi-stop trip">
+      <div id="tripList"><span class="empty">Click the map to add stops in order.</span></div>
+      <div id="tripActions">
+        <button type="button" id="tripStartBtn" class="primary" disabled>Start trip</button>
+        <button type="button" id="tripUndoBtn" class="ghost" disabled>Remove last</button>
+        <button type="button" id="tripClearBtn" class="ghost" disabled>Clear all</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="lanBanner"><b>LAN mode:</b> Anyone on this Wi-Fi network can open and control this page. Stop the server on the Mac when you are done.</div>
+  <div id="banner"></div>
+  <div id="devicePrompt">
+    <div class="devicePromptInner">
+      <span class="devicePromptIcon" aria-hidden="true"></span>
+      <div class="devicePromptBody">
+        <div id="devicePromptText"></div>
+        <div class="devicePromptActions">
+          <button type="button" id="deviceConfirmBtn" class="primary">Use this device</button>
+          <button type="button" id="deviceIgnoreBtn" class="ghost">Ignore</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="map">
+    <div id="hint" class="floatCenter"></div>
+    <!-- Search / coordinate find: show only, never moves until Move here -->
+    <div id="findPanel" class="floatCenter">
+      <div class="title" id="findTitle"></div>
+      <div class="actions">
+        <button id="moveHereBtn" class="primary" type="button">Move here</button>
+        <button id="findCancelBtn" class="ghost" type="button">Cancel</button>
+      </div>
+    </div>
+    <!-- Map-click route confirm (destination already chosen on the map) -->
+    <div id="goPanel" class="floatCenter">
+      <div class="title" id="goTitle"></div>
+      <div class="actions">
+        <button id="goBtn" class="primary" type="button">Go</button>
+        <button id="goTeleportBtn" type="button">Teleport instead</button>
+        <button id="goCancelBtn" class="ghost" type="button">Cancel</button>
+      </div>
+    </div>
+    <div id="moveBar" class="floatCenter">
+      <span class="label" id="moveLabel">Moving</span>
+      <button id="stopMoveBtn" class="danger">Stop here</button>
+    </div>
+  </div>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+
+    // Road speeds → POST /drive. Fly is special: great-circle via POST /fly to nearest airport.
+    const SPEED_LABELS = {
+      walk: 'Walk', bicycle: 'Bicycle', motorcycle: 'Motorcycle', car: 'Car', fly: 'Fly'
+    };
+    const ROAD_SPEEDS = { walk: true, bicycle: true, motorcycle: true, car: true };
+    const isFlySpeed = () => routeSpeed === 'fly';
+
+    // ---- Map: OpenFreeMap vector styles (free, no API key) --------------
+    // Style JSON URLs from https://openfreemap.org/quick_start/ (+ dark/fiord).
+    // Attribution (OSM / OpenMapTiles / OpenFreeMap) is embedded in each style.
+    // Color style and 3D camera are independent: View (Normal/3D) only changes
+    // pitch/bearing; Style only changes the tile JSON. Same pitch/bearing as
+    // OpenFreeMap's old liberty-3d demo (60° / 55°).
+    const MAP_STYLES = {
+      liberty:  { label: 'Liberty',  url: 'https://tiles.openfreemap.org/styles/liberty' },
+      bright:   { label: 'Bright',   url: 'https://tiles.openfreemap.org/styles/bright' },
+      positron: { label: 'Positron', url: 'https://tiles.openfreemap.org/styles/positron' },
+      dark:     { label: 'Dark',     url: 'https://tiles.openfreemap.org/styles/dark' },
+      fiord:    { label: 'Fiord',    url: 'https://tiles.openfreemap.org/styles/fiord' }
+    };
+    const DEFAULT_MAP_STYLE = 'liberty';
+    const MAP_3D_PITCH = 60;
+    const MAP_3D_BEARING = 55;
+    const LS_MAP_STYLE = 'mmaps-map-style';
+    const LS_MAP_VIEW = 'mmaps-map-view'; // 'normal' | '3d'
+
+    function resolveMapStyleId(stored) {
+      // Old combined picker stored "3d" / "liberty-3d" as a fake style — those
+      // meant Liberty colors + 3D camera. Map to Liberty here; view is separate.
+      if (stored === '3d' || stored === 'liberty-3d') return 'liberty';
+      if (stored && MAP_STYLES[stored]) return stored;
+      // Migrate old light/dark raster preference if present.
+      try {
+        const legacy = localStorage.getItem('mmaps-theme');
+        if (legacy === 'dark') return 'dark';
+        if (legacy === 'light') return 'liberty';
+      } catch (e) {}
+      return DEFAULT_MAP_STYLE;
+    }
+
+    function resolveMapView3d() {
+      try {
+        const v = localStorage.getItem(LS_MAP_VIEW);
+        if (v === '3d') return true;
+        if (v === 'normal') return false;
+        // Migrate: previous single picker used style id "3d" / "liberty-3d".
+        const oldStyle = localStorage.getItem(LS_MAP_STYLE);
+        if (oldStyle === '3d' || oldStyle === 'liberty-3d') return true;
+      } catch (e) {}
+      return false;
+    }
+
+    function styleUrl(id) {
+      return (MAP_STYLES[id] || MAP_STYLES[DEFAULT_MAP_STYLE]).url;
+    }
+
+    function applyCameraView(is3d, { animate = true } = {}) {
+      if (is3d) {
+        map.dragRotate.enable();
+        if (animate) {
+          map.easeTo({ pitch: MAP_3D_PITCH, bearing: MAP_3D_BEARING, duration: 600 });
+        } else {
+          map.setPitch(MAP_3D_PITCH);
+          map.setBearing(MAP_3D_BEARING);
+        }
+      } else {
+        // Hard-reset to flat 2D. easeTo alone can lose to setStyle's camera
+        // restore; setPitch/setBearing apply immediately and stick.
+        map.dragRotate.disable();
+        try { map.stop(); } catch (e) {}
+        map.setPitch(0);
+        map.setBearing(0);
+      }
+    }
+
+    function persistMapPrefs() {
+      try {
+        localStorage.setItem(LS_MAP_STYLE, currentMapStyle);
+        localStorage.setItem(LS_MAP_VIEW, mapView3d ? '3d' : 'normal');
+      } catch (e) {}
+    }
+
+    function syncStyleSelect() {
+      const sel = $('styleSelect');
+      if (sel && MAP_STYLES[currentMapStyle]) sel.value = currentMapStyle;
+    }
+
+    function syncViewSeg() {
+      document.querySelectorAll('#viewSeg button').forEach((btn) => {
+        const on = (btn.dataset.view === '3d') === mapView3d;
+        btn.classList.toggle('active', on);
+      });
+    }
+
+    let currentMapStyle = resolveMapStyleId((() => {
+      try { return localStorage.getItem(LS_MAP_STYLE); } catch (e) { return null; }
+    })());
+    let mapView3d = resolveMapView3d();
+    // One-time migrate: rewrite stored style away from the old fake "3d" id.
+    persistMapPrefs();
+
+    const map = new maplibregl.Map({
+      container: 'map',
+      style: styleUrl(currentMapStyle),
+      center: [0, 20],
+      zoom: 1.6,
+      pitch: mapView3d ? MAP_3D_PITCH : 0,
+      bearing: mapView3d ? MAP_3D_BEARING : 0,
+      attributionControl: true
+    });
+    if (!mapView3d) map.dragRotate.disable();
+    map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'bottom-right');
+
+    syncStyleSelect();
+    syncViewSeg();
+
+    // Color style only — keep current View (3D tilt) when tiles change.
+    $('styleSelect').addEventListener('change', () => {
+      const id = $('styleSelect').value;
+      if (!MAP_STYLES[id] || id === currentMapStyle) return;
+      const nextUrl = styleUrl(id);
+      currentMapStyle = id;
+      persistMapPrefs();
+      // setStyle drops custom layers/sources; style.load re-adds our overlays.
+      map.setStyle(nextUrl);
+      map.once('style.load', () => applyCameraView(mapView3d, { animate: false }));
+    });
+
+    // Camera View only — keep current color Style.
+    document.querySelectorAll('#viewSeg button').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const want3d = btn.dataset.view === '3d';
+        if (want3d === mapView3d) return;
+        mapView3d = want3d;
+        persistMapPrefs();
+        syncViewSeg();
+        applyCameraView(mapView3d, { animate: true });
+      });
+    });
+
+    const lines = {};
+    function setLine(id, coordinates, color) { lines[id] = { coordinates, color }; renderLine(id); }
+    function removeLine(id) { delete lines[id]; if (map.getLayer(id)) map.removeLayer(id); if (map.getSource(id)) map.removeSource(id); }
+    function renderLine(id) {
+      const l = lines[id]; if (!l) return;
+      const data = { type: 'Feature', geometry: { type: 'LineString', coordinates: l.coordinates } };
+      if (map.getSource(id)) { map.getSource(id).setData(data); return; }
+      map.addSource(id, { type: 'geojson', data });
+      map.addLayer({ id, type: 'line', source: id,
+        layout: { 'line-cap': 'round', 'line-join': 'round' },
+        paint: { 'line-color': l.color, 'line-width': 4, 'line-opacity': 0.85 } });
+    }
+    // After every style switch (and initial load), re-attach route/flight overlays.
+    map.on('style.load', () => Object.keys(lines).forEach(renderLine));
+
+    // Blue = current phone spoof. Amber = found / proposed destination (not yet moved).
+    let dotMarker = null, destMarker = null;
+    let dotStale = false; // true when engine is erroring — amber "not applied" marker
+    function showDot(lat, lon, { stale = false } = {}) {
+      const color = stale ? '#f59e0b' : '#3b82f6';
+      if (dotMarker && dotStale === stale) {
+        dotMarker.setLngLat([lon, lat]);
+        return;
+      }
+      if (dotMarker) { dotMarker.remove(); dotMarker = null; }
+      dotStale = stale;
+      dotMarker = new maplibregl.Marker({ color }).setLngLat([lon, lat]).addTo(map);
+    }
+    function clearDot() {
+      if (dotMarker) { dotMarker.remove(); dotMarker = null; }
+      dotStale = false;
+    }
+    function showDestMarker(lat, lon) {
+      if (destMarker) destMarker.setLngLat([lon, lat]);
+      else destMarker = new maplibregl.Marker({ color: '#f59e0b' }).setLngLat([lon, lat]).addTo(map);
+    }
+    function clearDestMarker() { if (destMarker) { destMarker.remove(); destMarker = null; } }
+
+    // ---- Backend helpers ------------------------------------------------
+    async function postJSON(url, body) {
+      const res = await fetch(url, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: body ? JSON.stringify(body) : undefined
+      });
+      if (!res.ok) {
+        let detail = res.statusText;
+        try { detail = (await res.json()).detail || detail; } catch (e) {}
+        throw new Error(typeof detail === 'string' ? detail : JSON.stringify(detail));
+      }
+      return res.json();
+    }
+
+    async function fetchOsrmRoute(from, to) {
+      const base = 'https://router.project-osrm.org/route/v1/driving/';
+      const url = `${base}${from.lon},${from.lat};${to.lon},${to.lat}?overview=full&geometries=geojson`;
+      let res;
+      try { res = await fetch(url); } catch (e) { return { error: 'network' }; }
+      if (res.status === 429) return { error: 'rate_limited' };
+      if (!res.ok) return { error: 'http' };
+      let data; try { data = await res.json(); } catch (e) { return { error: 'bad_response' }; }
+      if (data.code === 'NoRoute' || data.code !== 'Ok' || !data.routes || !data.routes.length) return { error: 'no_route' };
+      return { route: data.routes[0] };
+    }
+
+    // Place search via local proxy (Nominatim has no CORS for browser calls).
+    async function searchPlaces(query) {
+      const q = (query || '').trim();
+      if (!q) return { error: 'empty' };
+      let res;
+      try {
+        res = await fetch('/geocode?' + new URLSearchParams({ q, limit: '6' }));
+      } catch (e) { return { error: 'network' }; }
+      if (res.status === 429) return { error: 'rate_limited' };
+      if (!res.ok) {
+        let detail = 'http';
+        try { detail = (await res.json()).detail || detail; } catch (e) {}
+        return { error: res.status === 502 ? 'network' : 'http', detail };
+      }
+      let data;
+      try { data = await res.json(); } catch (e) { return { error: 'bad_response' }; }
+      const results = Array.isArray(data.results) ? data.results : [];
+      return { results };
+    }
+
+    // Parse "48.8584, 2.2945" / "48.8584 2.2945" / "48.8584;2.2945" as lat,lon.
+    function parseCoordinates(text) {
+      const t = (text || '').trim();
+      if (!t) return null;
+      const m = t.match(/^([+-]?\d+(?:\.\d+)?)\s*[,;\s]\s*([+-]?\d+(?:\.\d+)?)\s*$/);
+      if (!m) return null;
+      const lat = parseFloat(m[1]);
+      const lon = parseFloat(m[2]);
+      if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+      if (Math.abs(lat) > 90 || Math.abs(lon) > 180) return null;
+      return { lat, lon };
+    }
+
+    function shortName(display) {
+      if (!display) return '';
+      const part = String(display).split(',')[0].trim();
+      return part.length > 48 ? part.slice(0, 45) + '…' : part;
+    }
+    // Don't shortName coordinate labels (comma is lat/lon separator, not a place name).
+    function isCoordsLabel(label) {
+      return !!(label && parseCoordinates(label));
+    }
+    function displayLabel(label, lat, lon) {
+      if (label && isCoordsLabel(label)) return label;
+      if (label) return shortName(label);
+      if (lat != null && lon != null) return coordsLabel(lat, lon);
+      return '';
+    }
+    function escapeHtml(s) {
+      return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+    function coordsLabel(lat, lon) {
+      return lat.toFixed(5) + ', ' + lon.toFixed(5);
+    }
+
+    // Multi-stop: long hop → fly (same threshold as mmaps/trip.py).
+    const FLY_MIN_STRAIGHT_KM = 1000;
+
+    // ---- Mode / speed state ---------------------------------------------
+    let movementMode = localStorage.getItem('mmaps-mode') || 'teleport';
+    if (movementMode !== 'teleport' && movementMode !== 'route' && movementMode !== 'multistop') {
+      movementMode = 'teleport';
+    }
+    let routeSpeed = localStorage.getItem('mmaps-speed') || 'car';
+    if (!SPEED_LABELS[routeSpeed]) routeSpeed = 'car';
+    let activeMoveSpeed = null; // speed in use for the in-progress route (label lock)
+
+    let currentTarget = null;
+    let moving = false;
+    let wasMoving = false;
+    let serverFeatures = [];
+    // Search / coords preview only — never changes phone location until Move here.
+    let foundPlace = null;   // { lat, lon, label }
+    // Map-click route ready to Go.
+    let pendingRoute = null; // { dest, coordinates, distanceM, label, noRoute? }
+    // Multi-stop: ordered destinations (current location is always the start).
+    let tripStops = []; // [{lat, lon, label}]
+    let tripMarkers = []; // maplibregl.Marker[]
+    let tripPreviewLegs = []; // planned leg tags for list UI
+
+    function persistPref(key, value) {
+      try { localStorage.setItem(key, value); } catch (e) { /* private mode / quota */ }
+    }
+
+    function applyModeUI() {
+      document.querySelectorAll('#modeSeg [data-mode]').forEach((btn) => {
+        btn.classList.toggle('active', btn.getAttribute('data-mode') === movementMode);
+      });
+      $('speedGroup').classList.toggle('visible', movementMode === 'route');
+      $('tripGroup').classList.toggle('visible', movementMode === 'multistop');
+      document.querySelectorAll('#speedSeg [data-speed]').forEach((btn) => {
+        btn.classList.toggle('active', btn.getAttribute('data-speed') === routeSpeed);
+      });
+      // Keep open panels in sync with mode/speed so nothing looks "dead".
+      if (foundPlace) refreshFindPanelCopy();
+      if (pendingRoute) {
+        // If user flipped to Teleport while a confirm is open, offer jump instead of Go/Fly.
+        if (movementMode === 'teleport' && pendingRoute.dest) {
+          $('goTitle').innerHTML = 'Teleport mode — jump to this destination?';
+          $('goBtn').style.display = 'none';
+          $('goTeleportBtn').style.display = '';
+          $('goTeleportBtn').textContent = 'Teleport here';
+        } else if (movementMode === 'route') {
+          refreshGoPanelCopy();
+        } else {
+          // Left route/teleport confirm when entering multi-stop.
+          closeGoPanel({ clearMarker: true, clearLine: true });
+        }
+      }
+      renderTripList();
+      updateHint();
+    }
+
+    // One click must select every time: use event delegation, always refresh the
+    // active class, and never skip applyModeUI (a previous bug returned early
+    // after starting proposeTravel, leaving the old button looking selected).
+    function onModePick(next) {
+      if (!next) return;
+      if (next !== movementMode) {
+        movementMode = next;
+        persistPref('mmaps-mode', movementMode);
+        if (next !== 'multistop') {
+          // Keep stops if switching away? Clear overlays for a clean single-destination mode.
+          // Stops stay in memory only while multistop — clear when leaving.
+          clearTripStops({ keepMemory: false });
+        }
+      }
+      applyModeUI();
+    }
+
+    function onSpeedPick(next) {
+      if (!next || !SPEED_LABELS[next]) return;
+      const prev = routeSpeed;
+      if (next !== routeSpeed) {
+        routeSpeed = next;
+        persistPref('mmaps-speed', routeSpeed);
+      }
+      // Paint selection immediately — before any async route rebuild.
+      applyModeUI();
+      // If a destination confirm is open, rebuild path when switching Fly ↔ road.
+      if (pendingRoute && currentTarget && movementMode === 'route') {
+        const od = pendingRoute.originalDest || pendingRoute.dest;
+        const label = pendingRoute.originalLabel || pendingRoute.label || null;
+        const wasFly = prev === 'fly';
+        const nowFly = routeSpeed === 'fly';
+        if (wasFly !== nowFly && od) {
+          proposeTravel(od.lat, od.lon, label);
+        }
+      }
+    }
+
+    // Event delegation on the segment (one listener, not per-button rebinding).
+    function bindSeg(rootId, attr, handler) {
+      const root = $(rootId);
+      if (!root) return;
+      root.addEventListener('click', (e) => {
+        const btn = e.target.closest('button[' + attr + ']');
+        if (!btn || !root.contains(btn) || btn.disabled) return;
+        e.preventDefault();
+        e.stopPropagation();
+        handler(btn.getAttribute(attr));
+      });
+    }
+    bindSeg('modeSeg', 'data-mode', onModePick);
+    bindSeg('speedSeg', 'data-speed', onSpeedPick);
+    applyModeUI();
+
+    // ---- Panels ---------------------------------------------------------
+    function anyPanelOpen() {
+      return $('findPanel').style.display === 'block' || $('goPanel').style.display === 'block';
+    }
+
+    function closeFindPanel({ clearMarker = true } = {}) {
+      foundPlace = null;
+      $('findPanel').style.display = 'none';
+      if (clearMarker && !pendingRoute) clearDestMarker();
+      updateHint();
+    }
+
+    function closeGoPanel({ clearMarker = true, clearLine = true } = {}) {
+      pendingRoute = null;
+      $('goPanel').style.display = 'none';
+      if (clearLine) clearRouteLine();
+      if (clearMarker && !foundPlace) clearDestMarker();
+      updateHint();
+    }
+
+    function closeAllPanels() {
+      closeFindPanel({ clearMarker: false });
+      closeGoPanel({ clearMarker: false, clearLine: true });
+      clearDestMarker();
+      updateHint();
+    }
+
+    // ---- Multi-stop -----------------------------------------------------
+    function haversineKm(a, b) {
+      const R = 6371;
+      const toR = (d) => d * Math.PI / 180;
+      const dLat = toR(b.lat - a.lat), dLon = toR(b.lon - a.lon);
+      const lat1 = toR(a.lat), lat2 = toR(b.lat);
+      const h = Math.sin(dLat / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLon / 2) ** 2;
+      return 2 * R * Math.asin(Math.sqrt(h));
+    }
+
+    // Mirror of mmaps/trip.choose_leg_kind — only fly or drive.
+    function chooseLegKind(from, to, road) {
+      const straightKm = haversineKm(from, to);
+      const roadOk = !!(road && road.route);
+      const noRoad = !!(road && road.error === 'no_route');
+      if (noRoad || straightKm >= FLY_MIN_STRAIGHT_KM) return 'fly';
+      if (roadOk) return 'drive';
+      if (straightKm >= FLY_MIN_STRAIGHT_KM) return 'fly';
+      return 'drive';
+    }
+
+    function clearTripMarkers() {
+      tripMarkers.forEach((m) => { try { m.remove(); } catch (e) {} });
+      tripMarkers = [];
+    }
+
+    function clearTripStops({ keepMemory = false } = {}) {
+      if (!keepMemory) tripStops = [];
+      tripPreviewLegs = [];
+      clearTripMarkers();
+      removeLine('tripPath');
+      renderTripList();
+    }
+
+    function renderTripMarkers() {
+      clearTripMarkers();
+      tripStops.forEach((s, i) => {
+        const el = document.createElement('div');
+        el.className = 'stop-marker';
+        el.textContent = String(i + 1);
+        el.title = s.label || coordsLabel(s.lat, s.lon);
+        const m = new maplibregl.Marker({ element: el }).setLngLat([s.lon, s.lat]).addTo(map);
+        tripMarkers.push(m);
+      });
+    }
+
+    function renderTripList() {
+      const box = $('tripList');
+      const canEdit = movementMode === 'multistop' && !moving;
+      if (!tripStops.length) {
+        box.innerHTML = '<span class="empty">Click the map (or search + Move here) to add stops in order.</span>';
+      } else {
+        const items = tripStops.map((s, i) => {
+          const name = escapeHtml(displayLabel(s.label, s.lat, s.lon));
+          const leg = tripPreviewLegs[i];
+          const tag = leg
+            ? `<span class="legtag ${leg}">${leg === 'fly' ? 'Fly' : 'Drive'}</span>`
+            : '';
+          return `<li><b>${i + 1}.</b> ${name}${tag}</li>`;
+        }).join('');
+        box.innerHTML = `<ol>${items}</ol>`;
+      }
+      $('tripStartBtn').disabled = !canEdit || tripStops.length < 1 || !currentTarget;
+      $('tripUndoBtn').disabled = !canEdit || tripStops.length < 1;
+      $('tripClearBtn').disabled = !canEdit || tripStops.length < 1;
+    }
+
+    function addTripStop(lat, lon, label) {
+      if (moving) return;
+      if (!currentTarget) {
+        // Need a start first — place the phone, then add stops.
+        return teleport(lat, lon);
+      }
+      tripStops.push({
+        lat, lon,
+        label: label || coordsLabel(lat, lon)
+      });
+      tripPreviewLegs = []; // invalidate preview until next Start / replan
+      renderTripMarkers();
+      renderTripList();
+      map.flyTo({ center: [lon, lat], zoom: Math.max(map.getZoom(), 4), essential: true });
+      hideBanner();
+      updateHint();
+    }
+
+    async function planTripLegs() {
+      if (!currentTarget || !tripStops.length) return null;
+      const legs = [];
+      const kinds = [];
+      const landings = []; // airport (or fallback) per stop for markers
+      let from = { lat: currentTarget.lat, lon: currentTarget.lon };
+      const pathCoords = []; // for a light preview line
+
+      for (let i = 0; i < tripStops.length; i++) {
+        const to = tripStops[i];
+        const road = await fetchOsrmRoute(from, to);
+        let kind = chooseLegKind(from, to, road);
+
+        if (kind === 'drive' && !(road && road.route)) {
+          // Prefer fly if roads fail.
+          kind = 'fly';
+        }
+
+        if (kind === 'fly') {
+          // Same nearest-airport landing as standalone Fly (server also snaps).
+          const landing = await resolveLanding(to.lat, to.lon, to.label);
+          const arrive = { lat: landing.lat, lon: landing.lon, label: landing.label, airport: !landing.fallback };
+          legs.push({
+            kind: 'fly',
+            // Destination is the *user stop*; server snaps to airport. We also
+            // send the airport coords so the path matches what will play.
+            waypoints: [[from.lon, from.lat], [arrive.lon, arrive.lat]]
+          });
+          kinds.push('fly');
+          landings.push(arrive);
+          const gc = greatCircleLine(from, arrive, 32);
+          pathCoords.push(...gc);
+          from = { lat: arrive.lat, lon: arrive.lon };
+        } else {
+          const coords = road.route.geometry.coordinates;
+          legs.push({ kind: 'drive', coordinates: coords });
+          kinds.push('drive');
+          landings.push({ lat: to.lat, lon: to.lon, label: to.label, airport: false });
+          pathCoords.push(...coords);
+          from = { lat: to.lat, lon: to.lon };
+        }
+      }
+      return { legs, kinds, pathCoords, landings };
+    }
+
+    async function startMultiStopTrip() {
+      // Never silently no-op when the button looks clickable.
+      if (moving) {
+        showBanner('A trip or route is already in progress — use Stop here first.', 'warn');
+        return;
+      }
+      if (!currentTarget) {
+        showBanner('Set a starting location first (click the map or teleport).', 'warn');
+        return;
+      }
+      if (!tripStops.length) {
+        showBanner('Add at least one stop before starting the trip.', 'warn');
+        return;
+      }
+      if (serverFeatures.length && !serverFeatures.includes('trip') && !serverFeatures.includes('drive')) {
+        showBanner('The running server can’t do multi-stop trips. Restart the app / serve process.', 'error');
+        return;
+      }
+      $('tripStartBtn').disabled = true;
+      $('tripStartBtn').textContent = 'Planning…';
+      try {
+        const plan = await planTripLegs();
+        if (!plan || !plan.legs.length) {
+          showBanner('Could not plan the trip — check routing or try fewer stops.', 'error');
+          return;
+        }
+        tripPreviewLegs = plan.kinds;
+        // Show fly landings at airports (teal numbered markers), not only raw stops.
+        if (plan.landings && plan.landings.length) {
+          clearTripMarkers();
+          plan.landings.forEach((s, i) => {
+            const el = document.createElement('div');
+            el.className = 'stop-marker' + (s.airport ? ' airport' : '');
+            el.textContent = String(i + 1);
+            el.title = (s.airport ? 'Land: ' : '') + (s.label || coordsLabel(s.lat, s.lon));
+            tripMarkers.push(new maplibregl.Marker({ element: el }).setLngLat([s.lon, s.lat]).addTo(map));
+          });
+        }
+        renderTripList();
+        if (plan.pathCoords.length >= 2) {
+          setLine('tripPath', plan.pathCoords, '#a78bfa');
+        }
+        const res = await postJSON('/trip', { legs: plan.legs });
+        if (res.applied === false) {
+          showBanner(
+            'Trip started on the map, but the iPhone isn’t reachable — check the USB cable.',
+            'error'
+          );
+        } else {
+          hideBanner();
+        }
+        activeMoveSpeed = null;
+      } catch (err) {
+        const msg = /not found/i.test(err.message)
+          ? 'The running server is an older version without multi-stop. Restart it.'
+          : 'Could not start trip: ' + err.message;
+        showBanner(msg, 'error');
+      } finally {
+        $('tripStartBtn').textContent = 'Start trip';
+        renderTripList();
+      }
+    }
+
+    $('tripStartBtn').addEventListener('click', () => startMultiStopTrip());
+    $('tripUndoBtn').addEventListener('click', () => {
+      if (moving || !tripStops.length) return;
+      tripStops.pop();
+      tripPreviewLegs = [];
+      renderTripMarkers();
+      renderTripList();
+      removeLine('tripPath');
+      updateHint();
+    });
+    $('tripClearBtn').addEventListener('click', () => {
+      if (moving) return;
+      clearTripStops();
+      updateHint();
+    });
+
+    function refreshFindPanelCopy() {
+      if (!foundPlace) return;
+      const where = escapeHtml(displayLabel(foundPlace.label, foundPlace.lat, foundPlace.lon));
+      const speed = SPEED_LABELS[routeSpeed] || routeSpeed;
+      let action;
+      if (!currentTarget) {
+        action = 'Place phone here (first location)';
+      } else if (movementMode === 'teleport') {
+        action = 'Teleport mode — jump here';
+      } else if (movementMode === 'multistop') {
+        action = `Multi-stop — add as stop ${tripStops.length + 1}`;
+      } else if (isFlySpeed()) {
+        action = 'Fly — straight line to the nearest airport (not along roads)';
+      } else {
+        action = `Route · ${escapeHtml(speed)} — travel by road`;
+      }
+      $('findTitle').innerHTML = `Found <b>${where}</b><br><span style="color:var(--muted);font-size:12px">${action}. Phone has not moved yet.</span>`;
+      if (!currentTarget) $('moveHereBtn').textContent = 'Place here';
+      else if (movementMode === 'multistop') $('moveHereBtn').textContent = 'Add stop';
+      else $('moveHereBtn').textContent = 'Move here';
+    }
+
+    function showFoundPlace(lat, lon, label) {
+      // Preview only — no /spoof, no /drive.
+      closeGoPanel({ clearMarker: false, clearLine: true });
+      foundPlace = { lat, lon, label: label || coordsLabel(lat, lon) };
+      showDestMarker(lat, lon);
+      map.flyTo({ center: [lon, lat], zoom: Math.max(map.getZoom(), 10), essential: true });
+      refreshFindPanelCopy();
+      $('findPanel').style.display = 'block';
+      hideBanner();
+      updateHint();
+    }
+
+    function refreshGoPanelCopy() {
+      if (!pendingRoute) return;
+
+      if (pendingRoute.kind === 'fly') {
+        const land = pendingRoute.landing || {};
+        const apLabel = escapeHtml(land.label || coordsLabel(pendingRoute.dest.lat, pendingRoute.dest.lon));
+        const orig = pendingRoute.originalLabel ? shortName(pendingRoute.originalLabel) : null;
+        let sub;
+        if (land.fallback) {
+          sub = 'Straight flight to the point (no airport found nearby).';
+        } else if (orig) {
+          sub = `Nearest airport to <b>${escapeHtml(orig)}</b> — straight great-circle, not roads.`;
+        } else {
+          sub = 'Nearest airport — straight great-circle flight (not roads).';
+        }
+        $('goTitle').innerHTML = `Fly to <b>${apLabel}</b><br><span style="color:var(--muted);font-size:12px">${sub}</span>`;
+        $('goBtn').style.display = '';
+        $('goBtn').textContent = 'Fly';
+        $('goTeleportBtn').style.display = '';
+        $('goTeleportBtn').textContent = 'Teleport to airport';
+        return;
+      }
+
+      $('goBtn').textContent = 'Go';
+      $('goTeleportBtn').textContent = 'Teleport instead';
+
+      if (pendingRoute.noRoute || !pendingRoute.coordinates) {
+        const where = pendingRoute.label ? shortName(pendingRoute.label) : 'this spot';
+        $('goTitle').innerHTML = `No road to <b>${escapeHtml(where)}</b>. Teleport instead?`;
+        $('goBtn').style.display = 'none';
+        $('goTeleportBtn').style.display = '';
+        return;
+      }
+      const km = pendingRoute.distanceM / 1000;
+      const kmText = km < 10 ? km.toFixed(1) : Math.round(km).toString();
+      const speed = SPEED_LABELS[routeSpeed] || routeSpeed;
+      const where = pendingRoute.label ? shortName(pendingRoute.label) : null;
+      $('goTitle').innerHTML = where
+        ? `<b>${escapeHtml(where)}</b> — ${kmText} km by road · speed <b>${escapeHtml(speed)}</b>`
+        : `<b>${kmText} km</b> by road · speed <b>${escapeHtml(speed)}</b>`;
+      $('goBtn').style.display = '';
+      $('goTeleportBtn').style.display = '';
+    }
+
+    // ---- Actions: teleport / route --------------------------------------
+    function clearRouteLine() { removeLine('route'); removeLine('flight'); }
+
+    // Intermediate great-circle points for the map line only (lon, lat).
+    // Device flight still uses POST /fly waypoints — this is drawing only.
+    // Unwrap longitudes so consecutive points stay continuous across the
+    // antimeridian (±180°); otherwise MapLibre draws the long way around.
+    function greatCircleLine(from, to, steps) {
+      steps = steps || 64;
+      const coords = [];
+      const lat1 = from.lat * Math.PI / 180, lon1 = from.lon * Math.PI / 180;
+      const lat2 = to.lat * Math.PI / 180, lon2 = to.lon * Math.PI / 180;
+      const d = 2 * Math.asin(Math.sqrt(
+        Math.sin((lat2 - lat1) / 2) ** 2 +
+        Math.cos(lat1) * Math.cos(lat2) * Math.sin((lon2 - lon1) / 2) ** 2
+      ));
+      let prevLon = null;
+      for (let i = 0; i <= steps; i++) {
+        let lat, lon;
+        if (d < 1e-9) {
+          lat = from.lat;
+          lon = from.lon;
+        } else {
+          const f = i / steps;
+          const ka = Math.sin((1 - f) * d) / Math.sin(d);
+          const kb = Math.sin(f * d) / Math.sin(d);
+          const x = ka * Math.cos(lat1) * Math.cos(lon1) + kb * Math.cos(lat2) * Math.cos(lon2);
+          const y = ka * Math.cos(lat1) * Math.sin(lon1) + kb * Math.cos(lat2) * Math.sin(lon2);
+          const z = ka * Math.sin(lat1) + kb * Math.sin(lat2);
+          lat = Math.atan2(z, Math.hypot(x, y)) * 180 / Math.PI;
+          lon = Math.atan2(y, x) * 180 / Math.PI;
+        }
+        if (prevLon != null) {
+          while (lon - prevLon > 180) lon -= 360;
+          while (lon - prevLon < -180) lon += 360;
+        }
+        prevLon = lon;
+        coords.push([lon, lat]);
+      }
+      return coords;
+    }
+
+    async function teleport(lat, lon) {
+      closeFindPanel({ clearMarker: true });
+      closeGoPanel({ clearMarker: true, clearLine: true });
+      try {
+        const res = await postJSON('/spoof', { lat, lon });
+        const applied = res.applied !== false;
+        showDot(lat, lon, { stale: !applied });
+        if (!applied) {
+          showBanner(
+            'Target set on the map, but the iPhone isn’t reachable — check the USB cable.',
+            'error'
+          );
+        } else {
+          hideBanner();
+        }
+      } catch (err) {
+        showDot(lat, lon, { stale: true });
+        showBanner('Could not set location: ' + err.message, 'error');
+      }
+    }
+
+    async function startDrive(coordinates, speed) {
+      if (speed === 'fly') {
+        showBanner('Fly uses a straight flight path, not roads. Pick Fly and a destination again.', 'error');
+        return false;
+      }
+      if (serverFeatures.length && !serverFeatures.includes('drive')) {
+        showBanner('The running server can’t do route travel. Restart the app / serve process.', 'error');
+        return false;
+      }
+      const useSpeed = ROAD_SPEEDS[speed] ? speed : 'car';
+      try {
+        const res = await postJSON('/drive', { coordinates, mode: useSpeed });
+        activeMoveSpeed = useSpeed;
+        if (res.applied === false) {
+          showBanner(
+            'Route playing on the map, but the iPhone isn’t reachable — check the USB cable.',
+            'error'
+          );
+        } else {
+          hideBanner();
+        }
+        return true;
+      } catch (err) {
+        const msg = /not found/i.test(err.message)
+          ? 'The running server is an older version without route travel. Restart it.'
+          : 'Could not start route: ' + err.message;
+        showBanner(msg, 'error');
+        return false;
+      }
+    }
+
+    async function startFly(from, toAirport) {
+      if (serverFeatures.length && !serverFeatures.includes('fly')) {
+        showBanner('The running server can’t do flying. Restart the app / serve process.', 'error');
+        return false;
+      }
+      // Waypoints are GeoJSON [lon, lat] for POST /fly.
+      const waypoints = [
+        [from.lon, from.lat],
+        [toAirport.lon, toAirport.lat]
+      ];
+      try {
+        // "normal" time-compression: long hops play out in ~1–3 minutes.
+        const res = await postJSON('/fly', { waypoints, speed: 'normal' });
+        activeMoveSpeed = 'fly';
+        if (res.applied === false) {
+          showBanner(
+            'Flight playing on the map, but the iPhone isn’t reachable — check the USB cable.',
+            'error'
+          );
+        } else {
+          hideBanner();
+        }
+        return true;
+      } catch (err) {
+        const msg = /not found/i.test(err.message)
+          ? 'The running server is an older version without flying. Restart it.'
+          : 'Could not start flight: ' + err.message;
+        showBanner(msg, 'error');
+        return false;
+      }
+    }
+
+    async function fetchNearestAirport(lat, lon) {
+      try {
+        const res = await fetch('/nearest_airport?' + new URLSearchParams({
+          lat: String(lat), lon: String(lon)
+        }));
+        if (!res.ok) return null;
+        const data = await res.json();
+        return data.airport || null;
+      } catch (e) {
+        return null;
+      }
+    }
+
+    function routeErrorMessage(error, label) {
+      const where = label ? shortName(label) : 'there';
+      if (error === 'no_route') return `No road route to ${where}. Switch to Teleport, or pick another spot.`;
+      if (error === 'rate_limited') return 'Routing is busy (OSRM demo rate limit). Try again in a moment, or Teleport.';
+      if (error === 'network') return 'Couldn’t reach the routing service. Check the network, or Teleport.';
+      return 'Routing unavailable right now. Try Teleport or another destination.';
+    }
+
+    // Resolve landing: nearest real airport, or the point itself if lookup fails.
+    async function resolveLanding(destLat, destLon, label) {
+      const ap = await fetchNearestAirport(destLat, destLon);
+      if (ap) {
+        return {
+          lat: ap.lat,
+          lon: ap.lon,
+          label: ap.label || ap.name,
+          airport: ap,
+          fallback: false
+        };
+      }
+      return {
+        lat: destLat,
+        lon: destLon,
+        label: label || coordsLabel(destLat, destLon),
+        airport: null,
+        fallback: true
+      };
+    }
+
+    function showFlightPreview(from, landing, originalDest, originalLabel) {
+      removeLine('route');
+      const line = greatCircleLine(from, landing, 64);
+      setLine('flight', line, '#2dd4bf');
+      // Pin the airport (landing), not the original click if different.
+      showDestMarker(landing.lat, landing.lon);
+      pendingRoute = {
+        kind: 'fly',
+        dest: { lat: landing.lat, lon: landing.lon },
+        landing,
+        originalDest: originalDest || { lat: landing.lat, lon: landing.lon },
+        originalLabel: originalLabel || null,
+        coordinates: line,
+        flightFrom: { lat: from.lat, lon: from.lon },
+        noRoute: false
+      };
+      hideBanner();
+      refreshGoPanelCopy();
+      $('goPanel').style.display = 'block';
+      updateHint();
+    }
+
+    // Fly: straight great-circle to nearest airport (never OSRM roads).
+    async function proposeFly(destLat, destLon, label) {
+      if (!currentTarget) return teleport(destLat, destLon);
+      closeFindPanel({ clearMarker: false });
+      pendingRoute = null;
+      removeLine('route');
+
+      const landing = await resolveLanding(destLat, destLon, label);
+      showFlightPreview(
+        currentTarget,
+        landing,
+        { lat: destLat, lon: destLon },
+        label
+      );
+      if (landing.fallback) {
+        showBanner('No nearby airport in the dataset — flying straight to the point itself.');
+      }
+    }
+
+    // Map-click road route: OSRM path + Go panel (walk/bike/motorcycle/car only).
+    async function proposeRoad(destLat, destLon, label) {
+      if (!currentTarget) return teleport(destLat, destLon);
+      const dest = { lat: destLat, lon: destLon };
+      closeFindPanel({ clearMarker: false });
+      showDestMarker(destLat, destLon);
+      pendingRoute = null;
+      removeLine('flight');
+
+      const road = await fetchOsrmRoute(currentTarget, dest);
+      if (!road.route) {
+        clearRouteLine();
+        showBanner(routeErrorMessage(road.error, label));
+        pendingRoute = { kind: 'road', dest, coordinates: null, distanceM: null, label: label || null, noRoute: true };
+        refreshGoPanelCopy();
+        $('goPanel').style.display = 'block';
+        updateHint();
+        return;
+      }
+
+      setLine('route', road.route.geometry.coordinates, '#3b82f6');
+      pendingRoute = {
+        kind: 'road',
+        dest,
+        coordinates: road.route.geometry.coordinates,
+        distanceM: road.route.distance,
+        label: label || null,
+        noRoute: false
+      };
+      hideBanner();
+      refreshGoPanelCopy();
+      $('goPanel').style.display = 'block';
+      updateHint();
+    }
+
+    async function proposeTravel(destLat, destLon, label) {
+      if (isFlySpeed()) return proposeFly(destLat, destLon, label);
+      return proposeRoad(destLat, destLon, label);
+    }
+
+    // Search Move here uses the same Go confirm as map-click (not instant start).
+    async function travelAndGo(destLat, destLon, label) {
+      return proposeTravel(destLat, destLon, label);
+    }
+
+    // ---- Map click: direct control (applies mode now). Search does not. --
+    map.on('click', async (e) => {
+      if (moving) return;
+      hideSearchResults();
+      const lat = e.lngLat.lat, lon = e.lngLat.lng;
+      if (!currentTarget || movementMode === 'teleport') {
+        await teleport(lat, lon);
+      } else if (movementMode === 'multistop') {
+        addTripStop(lat, lon, null);
+      } else {
+        await proposeTravel(lat, lon, null);
+      }
+    });
+
+    // ---- Find panel (search / coordinates) — preview only until Move here
+    $('findCancelBtn').addEventListener('click', () => closeFindPanel({ clearMarker: true }));
+    $('moveHereBtn').addEventListener('click', async () => {
+      if (!foundPlace || moving) return;
+      const { lat, lon, label } = foundPlace;
+      foundPlace = null;
+      $('findPanel').style.display = 'none';
+      if (!currentTarget || movementMode === 'teleport') {
+        await teleport(lat, lon);
+      } else if (movementMode === 'multistop') {
+        addTripStop(lat, lon, label);
+      } else {
+        await travelAndGo(lat, lon, label);
+      }
+    });
+
+    // ---- Go panel -------------------------------------------------------
+    $('goCancelBtn').addEventListener('click', () => closeGoPanel({ clearMarker: true, clearLine: true }));
+    $('goTeleportBtn').addEventListener('click', () => {
+      if (!pendingRoute) return;
+      const { lat, lon } = pendingRoute.dest;
+      teleport(lat, lon);
+    });
+    $('goBtn').addEventListener('click', async () => {
+      if (!pendingRoute || moving) return;
+      if (pendingRoute.kind === 'fly') {
+        const from = pendingRoute.flightFrom || currentTarget;
+        const landing = pendingRoute.landing || pendingRoute.dest;
+        if (!from || !landing) return;
+        pendingRoute = null;
+        $('goPanel').style.display = 'none';
+        const ok = await startFly(from, landing);
+        if (!ok) {
+          clearRouteLine();
+          clearDestMarker();
+        }
+        updateHint();
+        return;
+      }
+      if (!pendingRoute.coordinates) return;
+      const coords = pendingRoute.coordinates;
+      const speed = routeSpeed === 'fly' ? 'car' : routeSpeed;
+      pendingRoute = null;
+      $('goPanel').style.display = 'none';
+      const ok = await startDrive(coords, speed);
+      if (!ok) {
+        clearRouteLine();
+        clearDestMarker();
+      }
+      updateHint();
+    });
+
+    // ---- Search ---------------------------------------------------------
+    function hideSearchResults() {
+      $('searchResults').style.display = 'none';
+      $('searchResults').innerHTML = '';
+    }
+
+    function pickSearchResult(lat, lon, label) {
+      hideSearchResults();
+      // SHOW only — do not call teleport / drive.
+      showFoundPlace(lat, lon, label);
+    }
+
+    async function runSearch() {
+      if (moving) return;
+      const raw = $('searchInput').value;
+      const q = (raw || '').trim();
+      if (!q) {
+        const box = $('searchResults');
+        box.innerHTML = '<div class="empty">Type a place name or coordinates.</div>';
+        box.style.display = 'block';
+        return;
+      }
+
+      // Coordinates: no network, show pin + Move here immediately.
+      const coords = parseCoordinates(q);
+      if (coords) {
+        hideSearchResults();
+        $('searchInput').value = coordsLabel(coords.lat, coords.lon);
+        pickSearchResult(coords.lat, coords.lon, coordsLabel(coords.lat, coords.lon));
+        return;
+      }
+
+      const box = $('searchResults');
+      box.innerHTML = '<div class="empty">Searching…</div>';
+      box.style.display = 'block';
+      const out = await searchPlaces(q);
+      if (out.error === 'empty') {
+        box.innerHTML = '<div class="empty">Type a place name or coordinates.</div>';
+        return;
+      }
+      if (out.error) {
+        const msgs = {
+          network: 'Couldn’t reach the place search service.',
+          rate_limited: 'Search is rate-limited — wait a few seconds and try again.',
+          http: 'Place search failed.',
+          bad_response: 'Place search gave an unexpected reply.'
+        };
+        box.innerHTML = `<div class="empty">${msgs[out.error] || 'Search failed.'}</div>`;
+        return;
+      }
+      if (!out.results.length) {
+        box.innerHTML = '<div class="empty">No places found.</div>';
+        return;
+      }
+      // Drop near-duplicate rows (same rounded lat/lon).
+      const seen = new Set();
+      const unique = [];
+      out.results.forEach((r) => {
+        const key = r.lat.toFixed(3) + ',' + r.lon.toFixed(3);
+        if (seen.has(key)) return;
+        seen.add(key);
+        unique.push(r);
+      });
+      if (!unique.length) {
+        box.innerHTML = '<div class="empty">No places found.</div>';
+        return;
+      }
+      box.innerHTML = '';
+      unique.forEach((r) => {
+        const b = document.createElement('button');
+        b.type = 'button';
+        const detail = [r.type, r.class].filter(Boolean).join(' · ');
+        const sub = detail
+          ? escapeHtml(r.name) + ' · ' + escapeHtml(detail)
+          : escapeHtml(r.name) + ' · ' + escapeHtml(r.lat.toFixed(4) + ', ' + r.lon.toFixed(4));
+        b.innerHTML = `<div class="name">${escapeHtml(shortName(r.name))}</div><div class="sub">${sub}</div>`;
+        b.addEventListener('click', () => {
+          $('searchInput').value = shortName(r.name);
+          pickSearchResult(r.lat, r.lon, r.name);
+        });
+        box.appendChild(b);
+      });
+    }
+
+    $('searchBtn').addEventListener('click', runSearch);
+    $('searchInput').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); runSearch(); }
+      if (e.key === 'Escape') { hideSearchResults(); closeFindPanel({ clearMarker: true }); }
+    });
+    document.addEventListener('click', (e) => {
+      if (!$('controls').contains(e.target)) hideSearchResults();
+    });
+
+    // ---- Stop controls --------------------------------------------------
+    $('stopMoveBtn').addEventListener('click', async () => {
+      try {
+        await postJSON('/stop_move');
+        clearRouteLine();
+        clearDestMarker();
+        activeMoveSpeed = null;
+        hideBanner();
+      } catch (err) { showBanner('Could not stop: ' + err.message); }
+    });
+    $('stopBtn').addEventListener('click', async () => {
+      try {
+        await postJSON('/stop');
+        clearDot();
+        closeAllPanels();
+        // Full stop must also clear multi-stop markers / list / buttons.
+        clearTripStops();
+        clearRouteLine();
+        removeLine('tripPath');
+        activeMoveSpeed = null;
+        hideBanner();
+      } catch (err) { showBanner('Could not stop: ' + err.message); }
+    });
+
+    // ---- Banners / hint -------------------------------------------------
+    // kind: 'error' (red, fatal), 'warn'/'status' (amber advisory), 'action' (amber).
+    let bannerKind = null;
+    function showBanner(msg, kind = 'action') {
+      const b = $('banner');
+      b.textContent = msg;
+      b.style.display = 'block';
+      b.classList.remove('banner-error', 'banner-warn');
+      b.classList.add(kind === 'error' ? 'banner-error' : 'banner-warn');
+      bannerKind = kind;
+    }
+    function hideBanner() {
+      const b = $('banner');
+      b.style.display = 'none';
+      b.classList.remove('banner-error', 'banner-warn');
+      bannerKind = null;
+    }
+
+    function updateHint() {
+      const hint = $('hint');
+      if (moving || anyPanelOpen() || $('devicePrompt').style.display === 'block') {
+        hint.style.display = 'none'; return;
+      }
+      hint.style.display = 'block';
+      if (!currentTarget) {
+        hint.textContent = 'Not spoofing yet — click the map or search a place to set the first location.';
+      } else if (movementMode === 'teleport') {
+        hint.textContent = 'Teleport mode — click the map to jump, or search then Move here.';
+      } else if (movementMode === 'multistop') {
+        hint.textContent = tripStops.length
+          ? 'Multi-stop — click to add another stop, then Start trip (auto fly/drive).'
+          : 'Multi-stop — click the map to add stop 1, then more stops, then Start trip.';
+      } else if (isFlySpeed()) {
+        hint.textContent = 'Fly — click a destination; lands at the nearest real airport (straight line).';
+      } else {
+        const sp = SPEED_LABELS[routeSpeed] || routeSpeed;
+        hint.textContent = `Route · ${sp} — click a destination (roads), or search then Move here.`;
+      }
+    }
+
+    // ---- Device confirm (live plug-in) ----------------------------------
+    let pendingDeviceUdid = null;
+    function showDevicePrompt(pending) {
+      if (!pending) {
+        $('devicePrompt').style.display = 'none';
+        pendingDeviceUdid = null;
+        return;
+      }
+      pendingDeviceUdid = pending.udid || null;
+      // Wording only — do not fetch real name/iOS here (that would open a
+      // second lockdown connection and race the hold loop).
+      const name = pending.name || '';
+      const ios = pending.ios_version ? ` (iOS ${pending.ios_version})` : '';
+      if (name && name !== 'iPhone') {
+        $('devicePromptText').textContent =
+          `${name}${ios} was detected on USB. Use it for location spoofing?`;
+      } else {
+        $('devicePromptText').textContent =
+          'An iPhone was detected on USB. Use it for location spoofing?';
+      }
+      $('devicePrompt').style.display = 'block';
+    }
+    $('deviceConfirmBtn').addEventListener('click', async () => {
+      try {
+        await postJSON('/device/confirm');
+        showDevicePrompt(null);
+        hideBanner();
+        await poll();
+      } catch (err) {
+        showBanner('Could not connect to the iPhone: ' + err.message, 'error');
+      }
+    });
+    $('deviceIgnoreBtn').addEventListener('click', async () => {
+      try {
+        await postJSON('/device/ignore');
+        showDevicePrompt(null);
+        await poll();
+      } catch (err) {
+        showBanner('Could not ignore device: ' + err.message, 'error');
+      }
+    });
+
+    // ---- Status polling -------------------------------------------------
+    let engineFatal = false;
+    function renderStatus(s) {
+      serverFeatures = Array.isArray(s.features) ? s.features : [];
+      $('lanBanner').style.display = s.lan ? 'block' : 'none';
+      // Waiting for a phone is not a fatal error.
+      engineFatal = !!(s.error_fatal && s.state === 'error');
+      const engineLive = !!s.engine_live && !engineFatal;
+      // Real DVT assert success (not task-alive). Falls back for older servers.
+      const applied = (typeof s.applied === 'boolean')
+        ? s.applied
+        : (!!s.assert_live && engineLive);
+      const reconnectStale = !!s.reconnect_stale;
+      const linkLost = !!(s.device && s.device.link_lost) || engineFatal || reconnectStale;
+
+      // Live plug-in confirm (not for silent reconnect of an already-confirmed phone).
+      if (s.pending_device) showDevicePrompt(s.pending_device);
+      else showDevicePrompt(null);
+
+      const dev = s.device;
+      // When the phone link is dead, don't show a green "connected" chip.
+      if (dev && !linkLost) {
+        $('deviceName').textContent = dev.name || 'iPhone';
+        $('iosVersion').textContent = dev.ios_version ? ('· iOS ' + dev.ios_version) : '';
+        $('devMode').textContent = dev.developer_mode === true ? 'on' : dev.developer_mode === false ? 'off' : 'unknown';
+        $('deviceDot').className = 'dot ' + (dev.trusted ? 'ok' : 'warn');
+      } else if (dev && linkLost) {
+        $('deviceName').textContent = 'disconnected';
+        $('iosVersion').textContent = dev.name ? ('· was ' + dev.name) : '';
+        $('devMode').textContent = '—';
+        $('deviceDot').className = 'dot err';
+      } else if (s.state === 'awaiting_confirm' && s.pending_device) {
+        $('deviceName').textContent = s.pending_device.name || 'iPhone';
+        $('iosVersion').textContent = s.pending_device.ios_version ? ('· iOS ' + s.pending_device.ios_version) : '';
+        $('devMode').textContent = '—';
+        $('deviceDot').className = 'dot warn';
+      } else if (s.state === 'waiting_for_device') {
+        $('deviceName').textContent = 'waiting for iPhone';
+        $('iosVersion').textContent = '';
+        $('devMode').textContent = '—';
+        $('deviceDot').className = 'dot';
+      } else {
+        $('deviceName').textContent = 'not connected';
+        $('iosVersion').textContent = '';
+        $('deviceDot').className = 'dot err';
+      }
+
+      moving = !!s.moving;
+      // Friendly state labels for idle / waiting.
+      let stateLabel = s.state || '—';
+      if (s.state === 'waiting_for_device') stateLabel = 'waiting';
+      else if (s.state === 'awaiting_confirm') stateLabel = 'confirm device';
+      else if (s.state === 'ready' || s.state === 'idle') stateLabel = s.state;
+      else if (s.state === 'reconnecting' && reconnectStale) stateLabel = 'not responding';
+      $('state').textContent = stateLabel;
+
+      // Honest spoof chip: never imply a real GPS position on launch.
+      $('spoofChip').style.display = '';
+      if (s.target) {
+        $('spoofState').textContent = moving ? 'moving' : (applied ? 'holding' : 'not on phone');
+      } else {
+        $('spoofState').textContent = 'not spoofing';
+      }
+
+      // Fatal engine errors stay visible; long reconnect escalates the message.
+      let statusMsg = null;
+      let statusKind = 'status';
+      if (engineFatal && s.error) {
+        statusMsg = s.error;
+        statusKind = 'error';
+      } else if (reconnectStale || (s.state === 'reconnecting' && linkLost && !engineLive)) {
+        statusMsg = 'iPhone not responding — check that it’s plugged in and unlocked.';
+        statusKind = 'error';
+      } else if (s.state === 'reconnecting') {
+        statusMsg = 'Reconnecting to the iPhone…';
+        statusKind = 'warn';
+      } else if (s.state === 'waiting_for_device') {
+        statusMsg = 'Plug in an iPhone over USB — you’ll be asked to confirm before it is used.';
+        statusKind = 'warn';
+      } else if (dev && !linkLost && dev.developer_mode === false) {
+        statusMsg = 'Developer Mode is OFF on the phone — location can’t be set until it’s on.';
+        statusKind = 'warn';
+      } else if (dev && !linkLost && !dev.trusted) {
+        statusMsg = 'This Mac isn’t trusted by the phone yet — tap Trust on the iPhone.';
+        statusKind = 'warn';
+      } else if (s.error && !moving) {
+        statusMsg = s.error;
+        statusKind = 'error';
+      }
+      if (statusMsg) showBanner(statusMsg, statusKind);
+      else if (bannerKind === 'status' || bannerKind === 'warn' || bannerKind === 'error') hideBanner();
+
+      currentTarget = s.target ? { lat: s.target.lat, lon: s.target.lon } : null;
+      if (s.target) {
+        // Amber when the point has not been asserted on a live phone.
+        showDot(s.target.lat, s.target.lon, { stale: !applied || engineFatal || linkLost });
+        $('coordsChip').style.display = '';
+        $('coords').textContent = s.target.lat.toFixed(5) + ', ' + s.target.lon.toFixed(5);
+        $('stopBtn').disabled = false;
+      } else {
+        // Neutral launch: no fake "real location" dot — only a spoof after first set.
+        clearDot();
+        $('coordsChip').style.display = 'none';
+        $('stopBtn').disabled = true;
+      }
+      // Keep find-panel copy honest if start location just appeared/disappeared.
+      if (foundPlace) refreshFindPanelCopy();
+
+      if (moving) {
+        // Don't clear a search preview marker while moving unless panels conflict.
+        $('goPanel').style.display = 'none';
+        pendingRoute = null;
+        $('findPanel').style.display = 'none';
+        foundPlace = null;
+        const m = s.movement || {};
+        const trip = s.trip;
+        const pct = m.total ? Math.min(100, Math.round((m.index / m.total) * 100)) : 0;
+        let movingWord;
+        if (trip && trip.legs) {
+          const legKind = trip.kind === 'fly' ? 'Flying' : 'Driving';
+          movingWord = `Trip ${trip.leg || '?'}/${trip.legs} · ${legKind}`;
+        } else {
+          const speedKey = activeMoveSpeed || (m.kind === 'fly' ? 'fly' : routeSpeed);
+          const speedLabel = SPEED_LABELS[speedKey] || 'Route';
+          movingWord = speedKey === 'fly' || m.kind === 'fly' ? 'Flying' : speedLabel;
+        }
+        const suffix = (!applied || engineFatal) ? ' · not on phone' : '';
+        $('moveLabel').innerHTML = `<b>${escapeHtml(movingWord)}</b> · ${pct}%${escapeHtml(suffix)}`;
+        $('moveBar').style.display = 'flex';
+        renderTripList();
+      } else {
+        $('moveBar').style.display = 'none';
+        if (wasMoving) {
+          clearRouteLine();
+          removeLine('tripPath');
+          // Only clear dest if no active find preview.
+          if (!foundPlace) clearDestMarker();
+          activeMoveSpeed = null;
+        }
+        // Always re-render trip button enabled state (not only on wasMoving).
+        renderTripList();
+      }
+      wasMoving = moving;
+      updateHint();
+    }
+
+    async function poll() {
+      try { renderStatus(await (await fetch('/status')).json()); }
+      catch (err) { $('deviceName').textContent = 'backend unreachable'; $('deviceDot').className = 'dot err'; }
+    }
+    poll();
+    setInterval(poll, 1000);
+    updateHint();
+  </script>
+</body>
+</html>

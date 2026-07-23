@@ -1,14 +1,19 @@
 #!/usr/bin/env python3
 """Render assets/logo/mayoka-black.svg → assets/icon/AppIcon.icns.
 
-Uses macOS Quick Look (qlmanage) to rasterize the SVG at 1024×1024, then
-Pillow + iconutil for the full iconset (16…1024 including @2x). Re-run after
-changing the black logo source.
+macOS Dock icons are NOT auto-masked like iOS:
+  - Artwork needs real padding (~10% margin → content ~80% of canvas).
+  - The canvas should already be a continuous rounded square (squircle),
+    not a hard-edged full-bleed square.
+
+Pipeline:
+  1. Rasterize the black mark (qlmanage).
+  2. Composite onto a white squircle with padding.
+  3. iconutil → full .icns size set (16…1024 + @2x).
 """
 from __future__ import annotations
 
 import io
-import os
 import shutil
 import subprocess
 import sys
@@ -21,19 +26,25 @@ OUT_DIR = PROJECT / "assets" / "icon"
 ICNS = OUT_DIR / "AppIcon.icns"
 MASTER_PNG = OUT_DIR / "AppIcon-1024.png"
 
+# Content scale: logo occupies this fraction of the canvas (rest is margin).
+LOGO_SCALE = 0.78
+# Superellipse exponent for Apple-like continuous corners (squircle).
+# n≈5 is closer to Apple's icon mask than a simple rounded rect.
+SQUIRCLE_N = 5.0
+# Soft edge AA for the mask.
+MASK_BLUR = 1.2
+
 
 def _at2x(base: str) -> str:
-    # Build "base@2x.png" without embedding an email-like literal in source.
     return base + chr(64) + "2x.png"
 
 
-def _rasterize_svg_1024(svg: Path, dest_png: Path) -> None:
+def _rasterize_svg(svg: Path, dest_png: Path, pixel_size: int = 1024) -> None:
     dest_png.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory() as tmp:
         tmp_path = Path(tmp)
-        # qlmanage writes <name>.svg.png into -o directory.
         subprocess.check_call(
-            ["qlmanage", "-t", "-s", "1024", "-o", str(tmp_path), str(svg)],
+            ["qlmanage", "-t", "-s", str(pixel_size), "-o", str(tmp_path), str(svg)],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
@@ -43,13 +54,65 @@ def _rasterize_svg_1024(svg: Path, dest_png: Path) -> None:
         shutil.copy2(produced[0], dest_png)
 
 
+def _squircle_mask(size: int, n: float = SQUIRCLE_N):
+    """Luminance mask: white inside continuous corner shape, black outside."""
+    from PIL import Image, ImageFilter
+
+    # Build at 2× then downscale for cleaner edges.
+    big = size * 2
+    mask = Image.new("L", (big, big), 0)
+    px = mask.load()
+    cx = cy = (big - 1) / 2.0
+    r = big / 2.0
+    # Slight inset so the mask sits inside the canvas (avoids clipped corners).
+    r *= 0.995
+    inv_n = 1.0 / n
+    for y in range(big):
+        ny = abs((y - cy) / r)
+        if ny > 1.0:
+            continue
+        # |x/r|^n + |y/r|^n <= 1  →  |x/r| <= (1 - |y/r|^n)^(1/n)
+        limit = (1.0 - ny ** n) ** inv_n
+        half = int(limit * r)
+        x0 = max(0, int(cx - half))
+        x1 = min(big - 1, int(cx + half))
+        for x in range(x0, x1 + 1):
+            nx = abs((x - cx) / r)
+            if nx ** n + ny ** n <= 1.0:
+                px[x, y] = 255
+    mask = mask.resize((size, size), Image.Resampling.LANCZOS)
+    if MASK_BLUR > 0:
+        mask = mask.filter(ImageFilter.GaussianBlur(radius=MASK_BLUR))
+    return mask
+
+
+def _compose_mac_icon(logo_png: Path, out_png: Path, size: int = 1024) -> None:
+    """White squircle + padded black mark → final 1024 master for iconutil."""
+    from PIL import Image
+
+    logo = Image.open(logo_png).convert("RGBA")
+    # Fit logo into LOGO_SCALE of the canvas, preserving aspect.
+    max_side = int(size * LOGO_SCALE)
+    lw, lh = logo.size
+    scale = min(max_side / float(lw), max_side / float(lh))
+    nw, nh = max(1, int(round(lw * scale))), max(1, int(round(lh * scale)))
+    logo = logo.resize((nw, nh), Image.Resampling.LANCZOS)
+
+    # White fill, then paste logo centered (keep alpha of mark).
+    canvas = Image.new("RGBA", (size, size), (255, 255, 255, 255))
+    ox = (size - nw) // 2
+    oy = (size - nh) // 2
+    canvas.paste(logo, (ox, oy), logo)
+
+    mask = _squircle_mask(size)
+    # Apply squircle: outside corners become fully transparent.
+    canvas.putalpha(mask)
+    out_png.parent.mkdir(parents=True, exist_ok=True)
+    canvas.save(out_png, format="PNG")
+
+
 def _build_icns(master_png: Path, icns: Path) -> None:
-    try:
-        from PIL import Image
-    except ImportError as exc:
-        raise SystemExit(
-            "Pillow is required to build the icon (venv/bin/pip install Pillow)."
-        ) from exc
+    from PIL import Image
 
     img = Image.open(master_png).convert("RGBA")
     if img.size != (1024, 1024):
@@ -88,8 +151,14 @@ def main() -> None:
         raise SystemExit("make_app_icon.py is macOS-only (qlmanage + iconutil).")
     if not SVG.is_file():
         raise SystemExit(f"Missing logo source: {SVG}")
-    print(f"Rasterizing {SVG.name} → 1024×1024…")
-    _rasterize_svg_1024(SVG, MASTER_PNG)
+
+    with tempfile.TemporaryDirectory() as tmp:
+        raw = Path(tmp) / "logo-raw.png"
+        print(f"Rasterizing {SVG.name}…")
+        _rasterize_svg(SVG, raw, pixel_size=1024)
+        print("Compositing padded squircle icon (white plate + ~78% mark)…")
+        _compose_mac_icon(raw, MASTER_PNG, size=1024)
+
     print(f"Building {ICNS.name}…")
     _build_icns(MASTER_PNG, ICNS)
     print(f"Wrote {ICNS} ({ICNS.stat().st_size} bytes)")

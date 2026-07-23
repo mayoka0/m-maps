@@ -403,19 +403,21 @@ def _elevated_force_kill() -> None:
 # User process: native window
 # ---------------------------------------------------------------------------
 
+def _app_display_name() -> str:
+    return os.environ.get("MMAPS_APP_NAME") or WINDOW_TITLE
+
+
 def _configure_macos_app_identity() -> None:
-    """Make menu bar / Dock show "M Maps" when the host binary is system python3.
+    """Claim the process name / bundle strings used by Cocoa for UI chrome.
 
-    The portable launcher runs Command Line Tools ``python3 -m mmaps.desktop``.
-    Without this, Cocoa treats the process as Python.app (mainBundle from the
-    interpreter), so the menu bar and sometimes the Dock flip to "Python" after
-    the GUI starts — even though Info.plist on the .app is correct.
-
-    Safe no-op outside a .app launch or if PyObjC is unavailable. Never raises.
+    The portable launcher runs system ``python3``, so mainBundle is Python's.
+    That is necessary but **not sufficient** for the menu-bar app name — see
+    ``_patch_pywebview_cocoa_identity`` and ``_force_menu_bar_app_name``.
+    Never raises.
     """
     if sys.platform != "darwin":
         return
-    app_name = os.environ.get("MMAPS_APP_NAME") or WINDOW_TITLE
+    app_name = _app_display_name()
     try:
         from Foundation import NSProcessInfo
 
@@ -426,9 +428,16 @@ def _configure_macos_app_identity() -> None:
         from Foundation import NSBundle
 
         bundle = NSBundle.mainBundle()
-        info = bundle.infoDictionary() if bundle is not None else None
-        if info is not None:
-            # mainBundle is usually Python.framework when launched via system python3.
+        if bundle is None:
+            return
+        # Patch both dictionaries — cocoa may bind to either at import time.
+        for getter in ("infoDictionary", "localizedInfoDictionary"):
+            try:
+                info = getattr(bundle, getter)()
+            except Exception:
+                info = None
+            if info is None:
+                continue
             info["CFBundleName"] = app_name
             info["CFBundleDisplayName"] = app_name
             ident = str(info.get("CFBundleIdentifier") or "")
@@ -441,6 +450,125 @@ def _configure_macos_app_identity() -> None:
                 info["CFBundleIdentifier"] = "local.mmaps.app"
     except Exception:
         pass
+
+
+def _patch_pywebview_cocoa_identity() -> None:
+    """Fix the *actual* sources of the menu-bar name in pywebview's Cocoa backend.
+
+    Investigation (webview/platforms/cocoa.py):
+
+    1. At **import**, cocoa binds a module-global ``info`` from
+       ``mainBundle().localizedInfoDictionary() or infoDictionary()``.
+       When the host is system python3, that is Python.app → CFBundleName
+       "Python".
+
+    2. ``BrowserView._append_app_name`` builds "Quit …" / "Hide …" / About
+       from that **module global**, not a live bundle re-read. Patching only
+       ``infoDictionary()`` after import does not help if ``info`` already
+       points at a snapshot that still says Python — which is why the prior
+       "fix" looked successful in isolation but the menu bar did not.
+
+    3. ``_add_app_menu`` creates the application menu item with **no title**
+       and an empty submenu title. AppKit then fills the bold menu-bar label
+       from the process/bundle name ("Python").
+
+    We fix all three: rewrite ``cocoa.info``, replace ``_append_app_name`` so
+    menu strings always use "M Maps", and wrap ``_add_app_menu`` so the first
+    main-menu item is titled "M Maps" as soon as the menu is built.
+
+    Call **immediately after** ``import webview``. Never raises.
+    """
+    if sys.platform != "darwin":
+        return
+    app_name = _app_display_name()
+    try:
+        import webview.platforms.cocoa as cocoa  # type: ignore
+    except Exception:
+        return
+
+    try:
+        info = getattr(cocoa, "info", None)
+        if info is not None:
+            info["CFBundleName"] = app_name
+            info["CFBundleDisplayName"] = app_name
+            try:
+                info["CFBundleIdentifier"] = "local.mmaps.app"
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+    try:
+        def _append_app_name(self, val):  # noqa: ANN001
+            return f"{val} {app_name}"
+
+        cocoa.BrowserView._append_app_name = _append_app_name  # type: ignore[method-assign]
+    except Exception:
+        pass
+
+    try:
+        if getattr(cocoa.BrowserView, "_mmaps_app_menu_patched", False):
+            return
+        _orig_add_app_menu = cocoa.BrowserView._add_app_menu
+
+        def _add_app_menu(self, mainMenu, custom_items=None):  # noqa: ANN001
+            _orig_add_app_menu(self, mainMenu, custom_items)
+            try:
+                if mainMenu is None or mainMenu.numberOfItems() < 1:
+                    return
+                item = mainMenu.itemAtIndex_(0)
+                if item is None:
+                    return
+                item.setTitle_(app_name)
+                sub = item.submenu()
+                if sub is not None:
+                    sub.setTitle_(app_name)
+            except Exception:
+                pass
+
+        cocoa.BrowserView._add_app_menu = _add_app_menu  # type: ignore[method-assign]
+        cocoa.BrowserView._mmaps_app_menu_patched = True  # type: ignore[attr-defined]
+    except Exception:
+        pass
+
+
+def _force_menu_bar_app_name() -> bool:
+    """Retitle the application menu item if it already exists (belt-and-suspenders).
+
+    Returns True if the first main-menu item title is "M Maps". Never raises.
+    """
+    if sys.platform != "darwin":
+        return False
+    app_name = _app_display_name()
+    try:
+        from AppKit import NSApplication
+        from PyObjCTools import AppHelper
+
+        def _apply() -> None:
+            app = NSApplication.sharedApplication()
+            menu = app.mainMenu()
+            if menu is None or menu.numberOfItems() < 1:
+                return
+            item = menu.itemAtIndex_(0)
+            if item is None:
+                return
+            item.setTitle_(app_name)
+            sub = item.submenu()
+            if sub is not None:
+                sub.setTitle_(app_name)
+
+        try:
+            AppHelper.callAfter(_apply)
+        except Exception:
+            pass
+        _apply()
+        menu = NSApplication.sharedApplication().mainMenu()
+        if menu is not None and menu.numberOfItems() >= 1:
+            title = str(menu.itemAtIndex_(0).title() or "")
+            return title == app_name
+        return False
+    except Exception:
+        return False
 
 
 def _app_icon_path() -> Optional[Path]:
@@ -469,14 +597,12 @@ def _apply_macos_dock_icon() -> bool:
         image = NSImage.alloc().initWithContentsOfFile_(str(icon_path))
         if image is None:
             return False
-        # Ensure a non-zero size so Cocoa accepts it for the Dock.
         try:
             if image.size().width <= 0 or image.size().height <= 0:
                 image.setSize_((128.0, 128.0))
         except Exception:
             pass
         app.setApplicationIconImage_(image)
-        # Confirm the app actually holds an icon image now.
         current = app.applicationIconImage()
         return current is not None
     except Exception:
@@ -484,22 +610,30 @@ def _apply_macos_dock_icon() -> bool:
 
 
 def _open_window(url: str) -> None:
+    # CRITICAL order: claim process/bundle identity BEFORE pywebview imports
+    # cocoa (which snapshots CFBundleName and creates NSApplication).
+    _configure_macos_app_identity()
+
     import webview
 
-    # Identity must be set before Cocoa finishes configuring the app menu.
+    # Patch cocoa's module-global info + menu builders (real menu-bar source).
+    _patch_pywebview_cocoa_identity()
     _configure_macos_app_identity()
     _apply_macos_dock_icon()
 
     def _on_gui_ready() -> None:
-        # Re-apply after WebKit/NSApp finishes starting — the first set can be
-        # overwritten when the host process is system Python.
         _configure_macos_app_identity()
+        _force_menu_bar_app_name()
         _apply_macos_dock_icon()
         try:
             import threading
 
             def _retry() -> None:
-                time.sleep(0.4)
+                time.sleep(0.35)
+                _force_menu_bar_app_name()
+                _apply_macos_dock_icon()
+                time.sleep(0.75)
+                _force_menu_bar_app_name()
                 _apply_macos_dock_icon()
 
             threading.Thread(target=_retry, daemon=True).start()
@@ -516,14 +650,13 @@ def _open_window(url: str) -> None:
         text_select=True,
     )
     # Cocoa + WebKit; private_mode=False keeps localStorage (map theme).
-    # func= runs once the GUI loop is up (best place to re-assert Dock icon).
     webview.start(gui="cocoa", private_mode=False, func=_on_gui_ready)
 
 
 def run_desktop(port: int) -> int:
     """User-facing entry: elevate the server, open the window, shut down cleanly."""
     _ensure_project_on_path()
-    # Before admin dialog / webview: claim M Maps identity (not "Python").
+    # Before admin dialog / webview import: claim M Maps identity (not "Python").
     _configure_macos_app_identity()
 
     # Resolve a real free port up front (never 0). Prefer the requested port

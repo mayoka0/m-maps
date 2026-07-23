@@ -4,11 +4,11 @@
 Layout (standard drag-to-install):
   - ``M Maps.app`` on the left
   - shortcut to ``/Applications`` on the right
-  - volume icon set to the app icon
+  - branded background with a subtle arrow cue
+  - compact Finder window (~660×420), not a huge empty frame
 
 Requires a prior ``build_app.py`` run (``dist/M Maps.app``). Output:
-``dist/M Maps.dmg``. Uses only macOS built-ins (hdiutil + AppleScript) —
-no Homebrew / create-dmg dependency.
+``dist/M Maps.dmg``. Uses only macOS built-ins (hdiutil + AppleScript).
 """
 from __future__ import annotations
 
@@ -28,13 +28,18 @@ APP_BUNDLE = DIST / f"{APP_NAME}.app"
 DMG_PATH = DIST / f"{APP_NAME}.dmg"
 VOLUME_NAME = "M Maps"
 ICON_ICNS = PROJECT_ROOT / "assets" / "icon" / "AppIcon.icns"
+LOGO_SVG = PROJECT_ROOT / "assets" / "logo" / "mayoka-black.svg"
+MASTER_ICON_PNG = PROJECT_ROOT / "assets" / "icon" / "AppIcon-1024.png"
 
-# Finder window geometry (points) for a clean two-icon layout.
-WINDOW_WIDTH = 640
-WINDOW_HEIGHT = 400
-ICON_SIZE = 128
-APP_XY = (160, 180)
-APPS_XY = (480, 180)
+# Finder window geometry — right/bottom = left+width / top+height.
+WINDOW_LEFT = 200
+WINDOW_TOP = 140
+WINDOW_WIDTH = 660
+WINDOW_HEIGHT = 420
+ICON_SIZE = 96
+# Icon positions in content view coordinates (y grows downward in Finder AS).
+APP_XY = (170, 185)
+APPS_XY = (490, 185)
 
 
 def _run(cmd, **kwargs):
@@ -60,21 +65,67 @@ def _attach_rw(dmg: Path) -> Path:
         ["hdiutil", "attach", "-readwrite", "-noverify", "-noautoopen", str(dmg)],
         text=True,
     )
-    # e.g. /dev/disk4s1  Apple_HFS  /Volumes/M Maps
     for line in out.splitlines():
         if "/Volumes/" in line:
-            vol = line.split("\t")[-1].strip() or line[line.index("/Volumes/") :].strip()
-            # last token is often the path
             m = re.search(r"(/Volumes/.+)$", line)
             if m:
                 return Path(m.group(1).strip())
-            return Path(vol)
+            return Path(line.split("\t")[-1].strip())
     raise RuntimeError(f"Could not find mount point in hdiutil output:\n{out}")
 
 
-def _set_finder_layout(volume: Path) -> None:
-    """Position app + Applications alias and set icon size / window bounds."""
-    # AppleScript paths: POSIX for shell, HFS-ish for Finder.
+def _make_background_png(path: Path) -> None:
+    """Simple branded installer background (dark panel + soft arrow + mark)."""
+    from PIL import Image, ImageDraw
+
+    w, h = WINDOW_WIDTH, WINDOW_HEIGHT
+    # Match the app UI dark panel.
+    bg = (11, 14, 20, 255)
+    accent = (59, 130, 246, 220)
+    muted = (144, 160, 179, 180)
+    img = Image.new("RGBA", (w, h), bg)
+    draw = ImageDraw.Draw(img)
+
+    # Soft top bar
+    draw.rectangle([0, 0, w, 48], fill=(20, 26, 35, 255))
+    draw.text((24, 16), "Install M Maps — drag to Applications", fill=(230, 237, 243, 255))
+
+    # Subtle arrow from app → Applications
+    y = APP_XY[1] + 8
+    x0 = APP_XY[0] + ICON_SIZE // 2 + 36
+    x1 = APPS_XY[0] - ICON_SIZE // 2 - 36
+    mid = (x0 + x1) // 2
+    draw.line([(x0, y), (x1 - 12, y)], fill=accent, width=3)
+    # Arrow head
+    draw.polygon(
+        [(x1, y), (x1 - 14, y - 8), (x1 - 14, y + 8)],
+        fill=accent,
+    )
+    draw.text((mid - 18, y + 14), "drag", fill=muted)
+
+    # Optional small logo watermark bottom-right
+    logo_src = MASTER_ICON_PNG if MASTER_ICON_PNG.is_file() else None
+    if logo_src is not None:
+        try:
+            mark = Image.open(logo_src).convert("RGBA")
+            mark.thumbnail((72, 72), Image.Resampling.LANCZOS)
+            # Fade
+            alpha = mark.split()[-1].point(lambda p: int(p * 0.25))
+            mark.putalpha(alpha)
+            img.paste(mark, (w - 88, h - 88), mark)
+        except Exception:
+            pass
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    # Finder wants a plain RGB background picture.
+    img.convert("RGB").save(path, format="PNG")
+
+
+def _set_finder_layout(volume: Path, bg_name: str = "background.png") -> None:
+    """Size the window, set background, position icons."""
+    # Use HFS path for background file inside the volume.
+    right = WINDOW_LEFT + WINDOW_WIDTH
+    bottom = WINDOW_TOP + WINDOW_HEIGHT
     script = f'''
 tell application "Finder"
     tell disk "{VOLUME_NAME}"
@@ -82,17 +133,21 @@ tell application "Finder"
         set current view of container window to icon view
         set toolbar visible of container window to false
         set statusbar visible of container window to false
-        set the bounds of container window to {{100, 100, {100 + WINDOW_WIDTH}, {100 + WINDOW_HEIGHT}}}
+        set the bounds of container window to {{{WINDOW_LEFT}, {WINDOW_TOP}, {right}, {bottom}}}
         set viewOptions to the icon view options of container window
         set arrangement of viewOptions to not arranged
         set icon size of viewOptions to {ICON_SIZE}
+        try
+            set background picture of viewOptions to file ".background:{bg_name}"
+        end try
         set position of item "{APP_NAME}.app" of container window to {{{APP_XY[0]}, {APP_XY[1]}}}
         set position of item "Applications" of container window to {{{APPS_XY[0]}, {APPS_XY[1]}}}
         update without registering applications
-        delay 1
+        delay 0.8
         close
         open
-        delay 1
+        set the bounds of container window to {{{WINDOW_LEFT}, {WINDOW_TOP}, {right}, {bottom}}}
+        delay 0.6
         close
     end tell
 end tell
@@ -116,19 +171,19 @@ def build() -> Path:
     with tempfile.TemporaryDirectory(prefix="mmaps-dmg-") as tmp:
         stage = Path(tmp) / "stage"
         stage.mkdir()
-        # Copy app into staging (preserve bundle).
         shutil.copytree(APP_BUNDLE, stage / f"{APP_NAME}.app", symlinks=True)
-        # Drag-to-install target.
         os.symlink("/Applications", stage / "Applications")
-        # Volume icon (shown in Finder sidebar / desktop when the DMG is open).
         shutil.copy2(ICON_ICNS, stage / ".VolumeIcon.icns")
+
+        # Hidden background folder (Finder looks up .background:background.png).
+        bg_dir = stage / ".background"
+        bg_dir.mkdir()
+        _make_background_png(bg_dir / "background.png")
 
         rw_dmg = Path(tmp) / "rw.dmg"
         if DMG_PATH.exists():
             DMG_PATH.unlink()
 
-        # Size the RW image with headroom for Finder metadata.
-        # -srcfolder often skips dotfiles; we re-copy the volume icon after attach.
         _run(
             [
                 "hdiutil",
@@ -149,12 +204,26 @@ def build() -> Path:
 
         volume = _attach_rw(rw_dmg)
         try:
-            # Layout first (Finder open/close), then volume icon so nothing
-            # from the AppleScript pass can race the custom-icon write.
+            # Ensure hidden items + background survive attach (srcfolder can drop dots).
+            vol_bg = volume / ".background"
+            vol_bg.mkdir(exist_ok=True)
+            if not (vol_bg / "background.png").is_file():
+                _make_background_png(vol_bg / "background.png")
+            # Hide the background folder from icon view.
+            try:
+                subprocess.run(
+                    ["SetFile", "-a", "V", str(vol_bg)],
+                    check=False,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+            except FileNotFoundError:
+                pass
+
             _set_finder_layout(volume)
+
             vol_icon = volume / ".VolumeIcon.icns"
             shutil.copy2(ICON_ICNS, vol_icon)
-            # Mark the volume as having a custom icon (Xcode CLT SetFile).
             try:
                 subprocess.run(
                     ["SetFile", "-a", "C", str(volume)],
@@ -163,14 +232,10 @@ def build() -> Path:
                     stderr=subprocess.DEVNULL,
                 )
             except (FileNotFoundError, subprocess.CalledProcessError):
-                # Without SetFile the .icns still ships; Finder may show it after remount.
                 pass
             if not vol_icon.is_file() or vol_icon.stat().st_size < 1000:
-                raise RuntimeError(
-                    f"Failed to write .VolumeIcon.icns on {volume} "
-                    f"(exists={vol_icon.is_file()})"
-                )
-            # Flush Finder + filesystem before detach so .DS_Store / icon stick.
+                raise RuntimeError("Failed to write .VolumeIcon.icns on the DMG volume")
+
             subprocess.run(["sync"], check=False)
             time.sleep(1.0)
         finally:
@@ -210,6 +275,7 @@ def build() -> Path:
 
     print(f"Built: {DMG_PATH}")
     print(f"Size:  {DMG_PATH.stat().st_size // 1024} KB")
+    print(f"Window: {WINDOW_WIDTH}×{WINDOW_HEIGHT}, icons {ICON_SIZE}px")
     print(f"Open:  open {DMG_PATH!s}")
     return DMG_PATH
 

@@ -1,0 +1,94 @@
+name: Bug report
+description: Something isn't working the way you expect
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug. The more detail you can give,
+        the easier it is to reproduce — especially iOS / macOS versions and which
+        mode you were using.
+
+  - type: input
+    id: macos
+    attributes:
+      label: macOS version
+      description: e.g. macOS 15.3 (Sequoia), Apple Silicon
+      placeholder: "macOS …"
+    validations:
+      required: true
+
+  - type: input
+    id: ios
+    attributes:
+      label: iOS version
+      description: Version on the iPhone you were spoofing (if applicable)
+      placeholder: "iOS …"
+    validations:
+      required: false
+
+  - type: dropdown
+    id: mode
+    attributes:
+      label: Mode involved
+      description: Which movement mode were you using when it broke?
+      options:
+        - Teleport
+        - Route (Walk / Bicycle / Motorcycle / Car)
+        - Fly
+        - Multi-stop
+        - Stop / restore GPS
+        - Desktop app launch / admin prompt
+        - Other / not sure
+    validations:
+      required: true
+
+  - type: dropdown
+    id: how_run
+    attributes:
+      label: How did you run M Maps?
+      options:
+        - Desktop app (m_maps.py app or M Maps.app)
+        - Browser serve (sudo … serve)
+        - serve --lan
+        - CLI (set / clear / detect)
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: What did you do, in order?
+      placeholder: |
+        1. …
+        2. …
+        3. …
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: What should have happened?
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: What happened instead? Error text, status chips, Find My behavior, etc.
+    validations:
+      required: true
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: Extra context
+      description: Screenshots, logs, cable/USB notes — anything else useful
+    validations:
+      required: false

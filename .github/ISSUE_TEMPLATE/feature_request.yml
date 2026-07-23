@@ -1,0 +1,44 @@
+name: Feature request
+description: Suggest an improvement or new capability
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Ideas welcome. Keep the scope realistic for a personal USB spoofing tool —
+        the focus is harmless pranks, not stealth or evasion.
+
+  - type: textarea
+    id: want
+    attributes:
+      label: What do you want?
+      description: Describe the feature in a few sentences.
+    validations:
+      required: true
+
+  - type: textarea
+    id: why
+    attributes:
+      label: Why does this matter?
+      description: What problem does it solve, or what would it make easier?
+    validations:
+      required: true
+
+  - type: textarea
+    id: how
+    attributes:
+      label: How should it work?
+      description: >
+        Sketch the UX or behavior if you have one in mind (modes, map controls,
+        CLI flags, etc.). Rough is fine.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives you've considered
+      description: Other approaches, workarounds, or related tools (optional)
+    validations:
+      required: false

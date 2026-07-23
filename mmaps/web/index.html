@@ -322,6 +322,7 @@
       <span class="chip">State <b id="state">—</b></span>
       <span class="chip" id="spoofChip">Spoof <b id="spoofState">not spoofing</b></span>
       <span class="chip" id="coordsChip" style="display:none">Location <b id="coords"></b></span>
+      <span class="chip" id="versionChip" title="Running app version">v<b id="appVersion">—</b></span>
     </div>
     <div class="spacer"></div>
     <div class="headerActions">
@@ -1794,7 +1795,8 @@
     // Public GitHub Releases API — no token. Fail silently offline.
     const UPDATE_LS_KEY = 'mmaps-update-check-at';
     const UPDATE_DISMISS_KEY = 'mmaps-update-dismissed-tag';
-    const UPDATE_INTERVAL_MS = 24 * 60 * 60 * 1000; // once per day
+    // During active development, check at most once per hour (not once/day).
+    const UPDATE_INTERVAL_MS = 60 * 60 * 1000;
     let appVersion = null;
     let githubRepo = 'mayoka0/m-maps';
     let updateCheckStarted = false;
@@ -1840,14 +1842,15 @@
       hideUpdateBanner();
     });
 
-    async function checkForUpdates(version, repo) {
+    async function checkForUpdates(version, repo, { force = false } = {}) {
       if (!version) return;
       appVersion = version;
+      if ($('appVersion')) $('appVersion').textContent = version;
       if (repo) githubRepo = repo;
       try {
         const now = Date.now();
         const last = parseInt(localStorage.getItem(UPDATE_LS_KEY) || '0', 10) || 0;
-        if (last && (now - last) < UPDATE_INTERVAL_MS) return;
+        if (!force && last && (now - last) < UPDATE_INTERVAL_MS) return;
         localStorage.setItem(UPDATE_LS_KEY, String(now));
       } catch (e) {
         // localStorage unavailable — still try once this session.
@@ -1862,7 +1865,10 @@
         const data = await res.json();
         const tag = data.tag_name || '';
         const url = data.html_url || ('https://github.com/' + githubRepo + '/releases');
-        if (!isNewerRelease(tag, version)) return;
+        if (!isNewerRelease(tag, version)) {
+          // Already latest — no banner (correct). Version chip still shows current.
+          return;
+        }
         try {
           if (localStorage.getItem(UPDATE_DISMISS_KEY) === tag) return;
         } catch (e) {}
@@ -1879,9 +1885,30 @@
       updateCheckStarted = true;
       try {
         const s = await (await fetch('/status')).json();
+        if (s.version && $('appVersion')) $('appVersion').textContent = s.version;
         await checkForUpdates(s.version, s.github_repo);
       } catch (e) { /* silent */ }
     })();
+
+    // Manual re-check: click the version chip in the header.
+    if ($('versionChip')) {
+      $('versionChip').style.cursor = 'pointer';
+      $('versionChip').title = 'Running version — click to check for updates';
+      $('versionChip').addEventListener('click', async () => {
+        try {
+          localStorage.removeItem(UPDATE_LS_KEY);
+        } catch (e) {}
+        try {
+          const s = await (await fetch('/status')).json();
+          await checkForUpdates(s.version, s.github_repo, { force: true });
+          // Soft feedback when already up to date (banner stays hidden).
+          if ($('updateBanner').style.display !== 'flex') {
+            showBanner('You’re on the latest release (v' + (s.version || '?') + ').', 'warn');
+            setTimeout(() => { if (bannerKind === 'warn') hideBanner(); }, 3500);
+          }
+        } catch (e) { /* silent */ }
+      });
+    }
   </script>
 </body>
 </html>

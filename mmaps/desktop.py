@@ -325,12 +325,20 @@ def _elevated_server_shell(port: int) -> str:
         str(port),
     ]
     pythonpath = _pythonpath_for_child()
+    # Carry in-bundle interpreter home + app identity into the elevated child
+    # (same env the launcher set for the user process).
+    extra_exports = []
+    for key in ("PYTHONHOME", "MMAPS_APP_BUNDLE", "MMAPS_APP_NAME"):
+        val = os.environ.get(key)
+        if val:
+            extra_exports.append(f"export {key}={shlex.quote(val)}; ")
     start = (
         f"export SUDO_USER={shlex.quote(user)}; "
         f"export USER={shlex.quote(user)}; "
         f"export HOME={shlex.quote(home)}; "
         f"export PYTHONPATH={shlex.quote(pythonpath)}; "
-        f"cd {shlex.quote(str(PROJECT_ROOT))} && "
+        + "".join(extra_exports)
+        + f"cd {shlex.quote(str(PROJECT_ROOT))} && "
         + " ".join(shlex.quote(part) for part in cmd)
     )
     # Same elevated shell: reap zombies first, then start — one password prompt.

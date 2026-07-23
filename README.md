@@ -2,7 +2,7 @@
 
 A macOS tool that spoofs the GPS location an iPhone reports, over a USB connection.
 
-**An open-source project by [Mayoka Labs]([.](https://github.com/Mayoka-Labs)**
+**An open-source project by [Mayoka Labs](https://github.com/Mayoka-Labs)**
 
 **For harmless pranks only — do not use to deceive, defraud, or evade tracking.**
 

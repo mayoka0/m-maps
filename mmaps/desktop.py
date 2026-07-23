@@ -443,25 +443,44 @@ def _configure_macos_app_identity() -> None:
         pass
 
 
-def _apply_macos_dock_icon() -> None:
-    """Point the Dock at AppIcon.icns inside the .app when we know its path."""
-    if sys.platform != "darwin":
-        return
+def _app_icon_path() -> Optional[Path]:
     app_bundle = os.environ.get("MMAPS_APP_BUNDLE") or ""
     if not app_bundle:
-        return
-    icon_path = Path(app_bundle) / "Contents" / "Resources" / "AppIcon.icns"
-    if not icon_path.is_file():
-        return
+        return None
+    path = Path(app_bundle) / "Contents" / "Resources" / "AppIcon.icns"
+    return path if path.is_file() else None
+
+
+def _apply_macos_dock_icon() -> bool:
+    """Point the Dock at AppIcon.icns inside the .app when we know its path.
+
+    Returns True if the Dock icon image was set successfully. Safe no-op when
+    not running from a .app or when AppKit is unavailable.
+    """
+    if sys.platform != "darwin":
+        return False
+    icon_path = _app_icon_path()
+    if icon_path is None:
+        return False
     try:
         from AppKit import NSApplication, NSImage
 
         app = NSApplication.sharedApplication()
         image = NSImage.alloc().initWithContentsOfFile_(str(icon_path))
-        if image is not None:
-            app.setApplicationIconImage_(image)
+        if image is None:
+            return False
+        # Ensure a non-zero size so Cocoa accepts it for the Dock.
+        try:
+            if image.size().width <= 0 or image.size().height <= 0:
+                image.setSize_((128.0, 128.0))
+        except Exception:
+            pass
+        app.setApplicationIconImage_(image)
+        # Confirm the app actually holds an icon image now.
+        current = app.applicationIconImage()
+        return current is not None
     except Exception:
-        pass
+        return False
 
 
 def _open_window(url: str) -> None:
@@ -470,6 +489,22 @@ def _open_window(url: str) -> None:
     # Identity must be set before Cocoa finishes configuring the app menu.
     _configure_macos_app_identity()
     _apply_macos_dock_icon()
+
+    def _on_gui_ready() -> None:
+        # Re-apply after WebKit/NSApp finishes starting — the first set can be
+        # overwritten when the host process is system Python.
+        _configure_macos_app_identity()
+        _apply_macos_dock_icon()
+        try:
+            import threading
+
+            def _retry() -> None:
+                time.sleep(0.4)
+                _apply_macos_dock_icon()
+
+            threading.Thread(target=_retry, daemon=True).start()
+        except Exception:
+            pass
 
     webview.create_window(
         WINDOW_TITLE,
@@ -481,7 +516,8 @@ def _open_window(url: str) -> None:
         text_select=True,
     )
     # Cocoa + WebKit; private_mode=False keeps localStorage (map theme).
-    webview.start(gui="cocoa", private_mode=False)
+    # func= runs once the GUI loop is up (best place to re-assert Dock icon).
+    webview.start(gui="cocoa", private_mode=False, func=_on_gui_ready)
 
 
 def run_desktop(port: int) -> int:

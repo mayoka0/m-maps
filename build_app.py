@@ -92,6 +92,11 @@ exec -a "M Maps" "$PYTHON" -m mmaps.desktop "$@"
 
 
 def _info_plist() -> dict:
+    # Version matches mmaps.__version__ / GitHub release tags.
+    try:
+        from mmaps import __version__ as app_version
+    except Exception:
+        app_version = "1.0.0"
     return {
         "CFBundleDevelopmentRegion": "en",
         "CFBundleDisplayName": APP_NAME,
@@ -101,8 +106,8 @@ def _info_plist() -> dict:
         "CFBundleInfoDictionaryVersion": "6.0",
         "CFBundleName": APP_NAME,
         "CFBundlePackageType": "APPL",
-        "CFBundleShortVersionString": "1.0.0",
-        "CFBundleVersion": "1",
+        "CFBundleShortVersionString": str(app_version),
+        "CFBundleVersion": str(app_version),
         "LSMinimumSystemVersion": "12.0",
         "NSHighResolutionCapable": True,
         "NSPrincipalClass": "NSApplication",

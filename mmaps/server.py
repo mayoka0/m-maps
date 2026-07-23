@@ -35,7 +35,7 @@ from pydantic import BaseModel
 
 from pymobiledevice3 import usbmux
 
-from mmaps import airports, device, flight, route
+from mmaps import __version__, airports, device, flight, route
 from mmaps.errors import humanize_error
 from mmaps.session import SpoofSession
 
@@ -51,6 +51,9 @@ _WEB_DIR = Path(__file__).parent / "web"
 # process is still up (it would serve the new HTML from disk but lack the new
 # routes in memory), the UI says "restart the server" instead of 404-ing.
 FEATURES = ["teleport", "drive", "fly", "geocode", "airports", "trip", "device_confirm"]
+
+# Public GitHub repo used by the UI for optional “new version available” checks.
+GITHUB_REPO = "mayoka0/m-maps"
 
 # How often to scan usbmux for a phone that appeared after launch.
 DEVICE_POLL_SECONDS = 2.0
@@ -418,12 +421,16 @@ async def status() -> dict:
             "spoofing": False,
             "features": FEATURES,
             "lan": _LAN_MODE,
+            "version": __version__,
+            "github_repo": GITHUB_REPO,
         }
     result = await session.status()
     result["features"] = FEATURES
     result["lan"] = _LAN_MODE
     result["pending_device"] = None  # active session owns the phone
     result["spoofing"] = result.get("target") is not None
+    result["version"] = __version__
+    result["github_repo"] = GITHUB_REPO
     return result
 
 

@@ -403,8 +403,73 @@ def _elevated_force_kill() -> None:
 # User process: native window
 # ---------------------------------------------------------------------------
 
+def _configure_macos_app_identity() -> None:
+    """Make menu bar / Dock show "M Maps" when the host binary is system python3.
+
+    The portable launcher runs Command Line Tools ``python3 -m mmaps.desktop``.
+    Without this, Cocoa treats the process as Python.app (mainBundle from the
+    interpreter), so the menu bar and sometimes the Dock flip to "Python" after
+    the GUI starts — even though Info.plist on the .app is correct.
+
+    Safe no-op outside a .app launch or if PyObjC is unavailable. Never raises.
+    """
+    if sys.platform != "darwin":
+        return
+    app_name = os.environ.get("MMAPS_APP_NAME") or WINDOW_TITLE
+    try:
+        from Foundation import NSProcessInfo
+
+        NSProcessInfo.processInfo().setProcessName_(app_name)
+    except Exception:
+        pass
+    try:
+        from Foundation import NSBundle
+
+        bundle = NSBundle.mainBundle()
+        info = bundle.infoDictionary() if bundle is not None else None
+        if info is not None:
+            # mainBundle is usually Python.framework when launched via system python3.
+            info["CFBundleName"] = app_name
+            info["CFBundleDisplayName"] = app_name
+            ident = str(info.get("CFBundleIdentifier") or "")
+            if (
+                not ident
+                or "python" in ident.lower()
+                or ident.startswith("org.python")
+                or ident.startswith("com.apple.python")
+            ):
+                info["CFBundleIdentifier"] = "local.mmaps.app"
+    except Exception:
+        pass
+
+
+def _apply_macos_dock_icon() -> None:
+    """Point the Dock at AppIcon.icns inside the .app when we know its path."""
+    if sys.platform != "darwin":
+        return
+    app_bundle = os.environ.get("MMAPS_APP_BUNDLE") or ""
+    if not app_bundle:
+        return
+    icon_path = Path(app_bundle) / "Contents" / "Resources" / "AppIcon.icns"
+    if not icon_path.is_file():
+        return
+    try:
+        from AppKit import NSApplication, NSImage
+
+        app = NSApplication.sharedApplication()
+        image = NSImage.alloc().initWithContentsOfFile_(str(icon_path))
+        if image is not None:
+            app.setApplicationIconImage_(image)
+    except Exception:
+        pass
+
+
 def _open_window(url: str) -> None:
     import webview
+
+    # Identity must be set before Cocoa finishes configuring the app menu.
+    _configure_macos_app_identity()
+    _apply_macos_dock_icon()
 
     webview.create_window(
         WINDOW_TITLE,
@@ -422,6 +487,8 @@ def _open_window(url: str) -> None:
 def run_desktop(port: int) -> int:
     """User-facing entry: elevate the server, open the window, shut down cleanly."""
     _ensure_project_on_path()
+    # Before admin dialog / webview: claim M Maps identity (not "Python").
+    _configure_macos_app_identity()
 
     # Resolve a real free port up front (never 0). Prefer the requested port
     # when free; otherwise take an OS-assigned ephemeral port.
@@ -517,8 +584,10 @@ def main(argv: Optional[List[str]] = None) -> int:
         if os.geteuid() != 0:
             print("Internal error: --server-only must run as root.", file=sys.stderr)
             return 1
+        # Elevated server has no GUI — leave process name alone.
         return run_server_only(args.port)
 
+    _configure_macos_app_identity()
     return run_desktop(args.port)
 
 

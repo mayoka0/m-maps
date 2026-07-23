@@ -67,6 +67,11 @@ if [ ! -d "$VENDOR_DIR" ]; then
 fi
 
 export PYTHONPATH="$APP_DIR:$VENDOR_DIR${PYTHONPATH:+:$PYTHONPATH}"
+# .app root (parent of Contents) — used so the GUI can claim "M Maps" identity
+# even though the interpreter binary is system python3.
+export MMAPS_APP_BUNDLE="$(cd "$CONTENTS_DIR/.." && pwd)"
+export MMAPS_APP_NAME="M Maps"
+
 # Prefer Command Line Tools Python (wheels built for it); fall back to /usr/bin.
 if [ -x "/Library/Developer/CommandLineTools/usr/bin/python3" ]; then
   PYTHON="/Library/Developer/CommandLineTools/usr/bin/python3"
@@ -80,7 +85,9 @@ fi
 # cd into the bundled app root so ``python -m`` does not pick up a random
 # ``mmaps`` package from the user's shell cwd (sys.path[0] is the cwd).
 cd "$APP_DIR"
-exec "$PYTHON" -m mmaps.desktop "$@"
+# exec -a keeps argv[0] as "M Maps" (helps process lists). Identity for the
+# menu bar / Dock is also fixed in mmaps.desktop via Cocoa before the window opens.
+exec -a "M Maps" "$PYTHON" -m mmaps.desktop "$@"
 """
 
 

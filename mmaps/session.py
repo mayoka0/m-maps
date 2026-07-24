@@ -151,6 +151,8 @@ class SpoofSession:
         self._task = None
         self._assert_live = False
         self._reconnect_since = None
+        # Intentional stop — don't keep advertising a dead link after restore GPS.
+        self._link_lost_sticky = False
         self._state = self.STOPPED
         self._error = None  # never leave a stale error after a clean stop
 
@@ -265,10 +267,19 @@ class SpoofSession:
                 self._trip_legs = 0
 
     async def _move(self, points, tick_seconds) -> None:
+        # Deadline-based sleep keeps pace even if set_target is briefly slow
+        # (wake/assert), so motion doesn't accumulate extra pauses.
+        next_deadline = time.monotonic()
         for index, (latitude, longitude) in enumerate(points, start=1):
             await self.set_target(latitude, longitude)
             self._move_index = index
-            await asyncio.sleep(tick_seconds)
+            next_deadline += float(tick_seconds)
+            delay = next_deadline - time.monotonic()
+            if delay > 0:
+                await asyncio.sleep(delay)
+            else:
+                # We're behind — catch up without sleeping (don't pile lag).
+                next_deadline = time.monotonic()
 
     @property
     def _is_moving(self) -> bool:

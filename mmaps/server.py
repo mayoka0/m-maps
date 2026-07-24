@@ -144,12 +144,30 @@ async def _attach_confirmed_session(app: FastAPI, udid: Optional[str] = None) ->
             with contextlib.suppress(Exception):
                 await old.close()
 
-        client = await device.connect(autopair=False)
+        # Prefer the user-confirmed serial so two phones on one Mac attach correctly.
+        serial = udid or app.state.confirmed_udid or await _first_usb_serial()
+        try:
+            # Headless-safe: autopair only if not yet trusted (Trust dialog on phone).
+            client = await device.connect(autopair=False, serial=serial)
+            client = await device.ensure_trusted(
+                client, serial=serial, interactive=False
+            )
+            status = await device.get_status(client)
+            # Do not silently reboot for Developer Mode in the desktop app —
+            # surface clear steps instead (CLI `serve` can still prompt).
+            if status.get("developer_mode") is False:
+                with contextlib.suppress(Exception):
+                    await client.close()
+                raise RuntimeError(device.DEVELOPER_MODE_OFF_MESSAGE)
+        except Exception:
+            # Leave no half-open session on attach failure.
+            raise
+
         session = SpoofSession(client)
         # Register session BEFORE start so a concurrent poll sees it and bails.
         app.state.session = session
         app.state.confirmed_udid = (
-            udid or getattr(client, "udid", None) or await _first_usb_serial()
+            serial or getattr(client, "udid", None) or await _first_usb_serial()
         )
         app.state.pending_device = None
         app.state.startup_error = None

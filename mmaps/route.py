@@ -2,8 +2,8 @@
 
 Pure functions, no I/O — easy to unit-test. The map GUI fetches the actual
 road route from a routing service (OSRM) in the browser; the coordinates land
-here, we resample them by speed into ~one-point-per-second, and the session
-feeds those points to ``set_target`` on a timer.
+here, we resample them by speed into one point per movement tick, and the
+session feeds those points to ``set_target`` on a timer.
 
 Speed presets (walk / bicycle / motorcycle / car / fly) are the same road
 route at different km/h — "fly" here is just the fastest preset along the
@@ -26,11 +26,15 @@ MODE_SPEEDS_KMH = {
 SPEED_PRESET_ORDER = ("walk", "bicycle", "motorcycle", "car")
 DEFAULT_SPEED_PRESET = "car"
 
-# One target update per second of simulated travel.
-TICK_SECONDS = 1.0
+# How often we push a new location while driving.
+# 1.0 s made car travel look like stop-go (~25 m jumps at 90 km/h). 0.2 s is
+# five updates per second (~5 m at car speed) — smooth in Find My without
+# hammering the DVT channel.
+TICK_SECONDS = 0.2
 
-# A few metres of random wobble per point so movement doesn't look robotic.
-JITTER_METERS = 2.5
+# Light lateral noise so roads don't look laser-straight. Kept small relative
+# to the finer step size so it doesn't reintroduce a "stutter".
+JITTER_METERS = 0.8
 
 _EARTH_RADIUS_M = 6_371_000.0
 _METERS_PER_DEGREE_LAT = 111_320.0

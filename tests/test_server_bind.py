@@ -1,5 +1,15 @@
 """Offline tests for LAN bind safety (no network servers started)."""
+import sys
+
 import pytest
+
+# Importing mmaps.server pulls device.py (pwd / usbmux). That stack is macOS-first;
+# skip on Windows CI rather than pulling platform-specific modules into app code.
+if sys.platform == "win32":
+    pytest.skip(
+        "server bind tests require Unix modules (pwd) pulled in via mmaps.device",
+        allow_module_level=True,
+    )
 
 from mmaps.server import _assert_safe_bind, is_private_lan_ip
 

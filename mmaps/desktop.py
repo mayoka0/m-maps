@@ -47,10 +47,56 @@ WINDOW_TITLE = "M Maps"
 WINDOW_WIDTH = 1280
 WINDOW_HEIGHT = 840
 
-# Parent of the mmaps package. In a source checkout this is the repo root; in
-# the portable .app this is Contents/Resources/app. Web/data assets live under
-# the package itself (Path(__file__).parent / …), so they always resolve.
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
+def _is_frozen() -> bool:
+    """True when running inside a PyInstaller bootloader process."""
+    return bool(getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"))
+
+
+def _detect_app_bundle() -> Optional[Path]:
+    """Path to M Maps.app when running from a bundled build."""
+    env = os.environ.get("MMAPS_APP_BUNDLE") or ""
+    if env:
+        p = Path(env)
+        if p.is_dir():
+            return p
+    if _is_frozen():
+        # …/M Maps.app/Contents/MacOS/<bootloader>
+        exe = Path(sys.executable).resolve()
+        # MacOS → Contents → .app
+        candidate = exe.parent.parent.parent
+        if candidate.suffix == ".app" or candidate.name.endswith(".app"):
+            return candidate
+    try:
+        from Foundation import NSBundle
+
+        bundle = NSBundle.mainBundle()
+        if bundle is not None:
+            path = Path(str(bundle.bundlePath()))
+            if path.suffix == ".app" or "M Maps" in path.name:
+                return path
+    except Exception:
+        pass
+    return None
+
+
+def _bootstrap_bundle_env() -> None:
+    """Set MMAPS_APP_BUNDLE / MMAPS_APP_NAME for Dock icon + child elevation."""
+    os.environ.setdefault("MMAPS_APP_NAME", WINDOW_TITLE)
+    if not os.environ.get("MMAPS_APP_BUNDLE"):
+        detected = _detect_app_bundle()
+        if detected is not None:
+            os.environ["MMAPS_APP_BUNDLE"] = str(detected)
+
+
+# Parent of the mmaps package.
+# - Source checkout: repo root
+# - PyInstaller: sys._MEIPASS (extracted/collected tree where mmaps/ lives)
+# Web/data assets live under the package itself (Path(__file__).parent / …).
+if _is_frozen():
+    PROJECT_ROOT = Path(getattr(sys, "_MEIPASS"))
+else:
+    PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 
 def _pid_file_path() -> Path:
@@ -238,10 +284,54 @@ def _pid_is_alive(pid: int) -> bool:
         return True
 
 
+# Console helper shipped next to the windowed bootloader (PyInstaller COLLECT).
+# Must stay distinct from the GUI binary so elevation is not a second runw/.app.
+_SERVER_HELPER_NAME = "mmaps-server"
+
+
+def _frozen_server_helper() -> Optional[Path]:
+    """Path to Contents/MacOS/mmaps-server when running from the .app."""
+    if not _is_frozen():
+        return None
+    helper = Path(sys.executable).resolve().parent / _SERVER_HELPER_NAME
+    return helper if helper.is_file() else None
+
+
 def _server_only_match_pattern() -> str:
     """pgrep/pkill pattern unique to elevated M Maps desktop servers."""
-    # Match this venv's python running our server-only entry.
+    if _is_frozen():
+        helper = _frozen_server_helper()
+        if helper is not None:
+            return f"{helper} --server-only"
+        # Legacy fallback (pre-helper builds): windowed bootloader + flag.
+        return f"{sys.executable} --server-only"
     return f"{sys.executable} -m mmaps.desktop --server-only"
+
+
+def _elevated_server_argv(port: int) -> List[str]:
+    """Argv for the root map server (venv module form or frozen helper).
+
+    Frozen builds **must** use the console ``mmaps-server`` helper, not the
+    windowed ``M Maps`` bootloader. Re-execing the GUI binary as root created
+    a second AppKit-capable process of the same .app and left the window in
+    “Application Not Responding”.
+    """
+    if _is_frozen():
+        helper = _frozen_server_helper()
+        if helper is None:
+            raise RuntimeError(
+                "M Maps.app is missing Contents/MacOS/mmaps-server "
+                "(headless elevated helper). Rebuild with build_app.py."
+            )
+        return [str(helper), "--server-only", "--port", str(port)]
+    return [
+        sys.executable,
+        "-m",
+        "mmaps.desktop",
+        "--server-only",
+        "--port",
+        str(port),
+    ]
 
 
 def _shell_kill_stale_servers() -> str:
@@ -268,12 +358,31 @@ def _shell_kill_stale_servers() -> str:
 # Elevated child: the existing FastAPI server (root, no window)
 # ---------------------------------------------------------------------------
 
+def _become_headless_server_process() -> None:
+    """Keep the elevated helper from acting like a second GUI app instance.
+
+    The console ``mmaps-server`` bootloader already avoids runw; this is a
+    belt-and-suspenders policy if anything still touches AppKit.
+    """
+    if sys.platform != "darwin":
+        return
+    try:
+        from AppKit import NSApplication, NSApplicationActivationPolicyProhibited
+
+        app = NSApplication.sharedApplication()
+        app.setActivationPolicy_(NSApplicationActivationPolicyProhibited)
+    except Exception:
+        pass
+
+
 def run_server_only(port: int) -> int:
-    """Blocking server process. Invoked only after admin elevation."""
+    """Blocking headless server. Invoked only after admin elevation."""
     if port <= 0:
         print(f"Internal error: invalid server port {port!r}.", file=sys.stderr)
         return 1
 
+    # Never claim Dock / activation — this process is root + headless only.
+    _become_headless_server_process()
     _ensure_project_on_path()
 
     user, home = _real_user_and_home()
@@ -315,22 +424,31 @@ def run_server_only(port: int) -> int:
 def _elevated_server_shell(port: int) -> str:
     """Shell command the admin dialog will run (kill stale + start server)."""
     user, home = _real_user_and_home()
-    python = sys.executable
-    cmd = [
-        python,
-        "-m",
-        "mmaps.desktop",
-        "--server-only",
-        "--port",
-        str(port),
-    ]
-    pythonpath = _pythonpath_for_child()
+    cmd = _elevated_server_argv(port)
+    extra_exports = []
+    for key in ("MMAPS_APP_BUNDLE", "MMAPS_APP_NAME"):
+        val = os.environ.get(key)
+        if val:
+            extra_exports.append(f"export {key}={shlex.quote(val)}; ")
+    # Frozen bootloader does not need PYTHONPATH/PYTHONHOME (everything is
+    # inside the .app). Dev/venv still passes PYTHONPATH for vendor + package.
+    if not _is_frozen():
+        pythonpath = _pythonpath_for_child()
+        extra_exports.append(f"export PYTHONPATH={shlex.quote(pythonpath)}; ")
+        for key in ("PYTHONHOME",):
+            val = os.environ.get(key)
+            if val:
+                extra_exports.append(f"export {key}={shlex.quote(val)}; ")
+        cd_part = f"cd {shlex.quote(str(PROJECT_ROOT))} && "
+    else:
+        # Stay in a neutral cwd; do not depend on the checkout existing.
+        cd_part = "cd /tmp && "
     start = (
         f"export SUDO_USER={shlex.quote(user)}; "
         f"export USER={shlex.quote(user)}; "
         f"export HOME={shlex.quote(home)}; "
-        f"export PYTHONPATH={shlex.quote(pythonpath)}; "
-        f"cd {shlex.quote(str(PROJECT_ROOT))} && "
+        + "".join(extra_exports)
+        + cd_part
         + " ".join(shlex.quote(part) for part in cmd)
     )
     # Same elevated shell: reap zombies first, then start — one password prompt.
@@ -572,21 +690,49 @@ def _force_menu_bar_app_name() -> bool:
 
 
 def _app_icon_path() -> Optional[Path]:
+    candidates: List[Path] = []
     app_bundle = os.environ.get("MMAPS_APP_BUNDLE") or ""
-    if not app_bundle:
-        return None
-    path = Path(app_bundle) / "Contents" / "Resources" / "AppIcon.icns"
-    return path if path.is_file() else None
+    if app_bundle:
+        candidates.append(Path(app_bundle) / "Contents" / "Resources" / "AppIcon.icns")
+    detected = _detect_app_bundle()
+    if detected is not None:
+        candidates.append(detected / "Contents" / "Resources" / "AppIcon.icns")
+    try:
+        from Foundation import NSBundle
+
+        bundle = NSBundle.mainBundle()
+        if bundle is not None:
+            for name in ("AppIcon", "icon-windowed", "icon"):
+                p = bundle.pathForResource_ofType_(name, "icns")
+                if p:
+                    candidates.append(Path(str(p)))
+            res = Path(str(bundle.resourcePath() or ""))
+            if res.is_dir():
+                candidates.extend(res.glob("*.icns"))
+    except Exception:
+        pass
+    for path in candidates:
+        if path.is_file():
+            return path
+    return None
 
 
 def _apply_macos_dock_icon() -> bool:
-    """Point the Dock at AppIcon.icns inside the .app when we know its path.
+    """Optionally set Dock icon — only when the bundle icon is not available.
 
-    Returns True if the Dock icon image was set successfully. Safe no-op when
-    not running from a .app or when AppKit is unavailable.
+    Frozen .app builds must **not** call ``setApplicationIconImage_`` with a
+    static PNG/ICNS. That replaces the system-managed Dock icon and blocks
+    macOS appearance modes (tint / clear / dark). The Dock should use
+    ``CFBundleIconFile`` / ``CFBundleIconName`` from Info.plist so the icon
+    follows System Settings like every other app.
+
+    Dev (non-frozen) runs have no bundle icon, so we still set it from disk.
     """
     if sys.platform != "darwin":
         return False
+    # Packaged app: leave Dock icon to Launch Services + system styling.
+    if _is_frozen():
+        return True
     icon_path = _app_icon_path()
     if icon_path is None:
         return False
@@ -730,16 +876,97 @@ def run_desktop(port: int) -> int:
     return 0
 
 
+def _run_bundle_smoke() -> int:
+    """No-GUI check used by build_app.py: imports + mainBundle identity."""
+    import traceback
+
+    _bootstrap_bundle_env()
+    lines: List[str] = []
+    try:
+        import mmaps.desktop  # noqa: F401
+        import mmaps.server  # noqa: F401
+        import pymobiledevice3  # noqa: F401
+        import webview  # noqa: F401
+
+        lines.append("imports_ok")
+    except Exception as e:
+        print(f"bundle_smoke_fail imports: {e}", file=sys.stderr)
+        traceback.print_exc(file=sys.stderr)
+        return 1
+
+    # Asset paths used by the map + airport lookup must resolve inside the bundle.
+    try:
+        from mmaps.server import _WEB_DIR
+        from mmaps.airports import _DATA_PATH
+
+        if not (_WEB_DIR / "index.html").is_file():
+            print(f"bundle_smoke_fail missing web UI: {_WEB_DIR}", file=sys.stderr)
+            return 1
+        if not _DATA_PATH.is_file():
+            print(f"bundle_smoke_fail missing airports: {_DATA_PATH}", file=sys.stderr)
+            return 1
+        lines.append("assets_ok")
+    except Exception as e:
+        print(f"bundle_smoke_fail assets: {e}", file=sys.stderr)
+        return 1
+
+    try:
+        from Foundation import NSBundle
+
+        bundle = NSBundle.mainBundle()
+        bpath = str(bundle.bundlePath()) if bundle else ""
+        info = (bundle.infoDictionary() or {}) if bundle else {}
+        name = str(info.get("CFBundleName") or "")
+        lines.append(f"bundlePath={bpath}")
+        lines.append(f"CFBundleName={name}")
+        lines.append(f"frozen={_is_frozen()}")
+        lines.append(f"executable={sys.executable}")
+        if "M Maps.app" not in bpath and not bpath.endswith("M Maps.app"):
+            # Also accept when running the bootloader by path before LS full reg.
+            if "M Maps" not in bpath and "M Maps" not in sys.executable:
+                print(
+                    f"bundle_smoke_fail identity: bundlePath={bpath!r}",
+                    file=sys.stderr,
+                )
+                return 1
+        if name and name != "M Maps" and "python" in name.lower():
+            print(f"bundle_smoke_fail CFBundleName={name!r}", file=sys.stderr)
+            return 1
+        helper = _frozen_server_helper()
+        if _is_frozen():
+            if helper is None:
+                print(
+                    "bundle_smoke_fail missing mmaps-server helper next to bootloader",
+                    file=sys.stderr,
+                )
+                return 1
+            lines.append(f"server_helper={helper}")
+        lines.append("bundle_ok")
+    except Exception as e:
+        print(f"bundle_smoke_fail cocoa: {e}", file=sys.stderr)
+        return 1
+
+    print("\n".join(lines))
+    return 0
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     if sys.platform != "darwin":
         print("M Maps only runs on macOS.", file=sys.stderr)
         return 1
+
+    _bootstrap_bundle_env()
 
     parser = argparse.ArgumentParser(description="M Maps desktop app")
     parser.add_argument(
         "--server-only",
         action="store_true",
         help=argparse.SUPPRESS,  # elevated child only
+    )
+    parser.add_argument(
+        "--bundle-smoke",
+        action="store_true",
+        help=argparse.SUPPRESS,  # build-time identity / import check
     )
     parser.add_argument(
         "--port",
@@ -749,12 +976,24 @@ def main(argv: Optional[List[str]] = None) -> int:
     )
     args = parser.parse_args(argv)
 
+    if args.bundle_smoke:
+        return _run_bundle_smoke()
+
     if args.server_only:
         if os.geteuid() != 0:
             print("Internal error: --server-only must run as root.", file=sys.stderr)
             return 1
-        # Elevated server has no GUI — leave process name alone.
+        # Headless elevated path — no Dock identity patching, no webview.
         return run_server_only(args.port)
+
+    # GUI process only from here.
+    if _is_frozen() and _frozen_server_helper() is None:
+        print(
+            "M Maps.app is incomplete (missing Contents/MacOS/mmaps-server). "
+            "Rebuild with: venv/bin/python3 build_app.py",
+            file=sys.stderr,
+        )
+        return 1
 
     _configure_macos_app_identity()
     return run_desktop(args.port)

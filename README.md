@@ -6,7 +6,7 @@ A macOS tool that spoofs the GPS location an iPhone reports, over a USB connecti
 
 **For harmless pranks only — do not use to deceive, defraud, or evade tracking.**
 
-It's open source specifically so anyone can read exactly what it does to their phone: it only ever sets (or clears) a simulated location via Apple's own developer/instruments protocol. No network calls, no telemetry, no data collection.
+It's open source specifically so anyone can read exactly what it does to their phone: it only ever sets (or clears) a simulated location via Apple's own developer/instruments protocol. **No telemetry or data collection.** The Python backend talks to the phone over USB; place search is an optional proxy to OpenStreetMap Nominatim. Map tiles and road routing are fetched by the browser (or the embedded webview), not for analytics.
 
 ## Features
 
@@ -43,10 +43,11 @@ venv/bin/python3 build_app.py          # → dist/M Maps.app (self-contained)
 venv/bin/python3 build_dmg.py          # → dist/M Maps.dmg  (optional)
 ```
 
-`build_app.py` bundles the `mmaps` package and all pip dependencies **inside**
-the `.app` (`Contents/Resources/app` + `vendor`). The launcher resolves paths
-from the bundle at runtime, so a DMG you build can be installed on another
-Mac (same architecture, with Xcode Command Line Tools) via drag-to-Applications.
+`build_app.py` uses **PyInstaller** (windowed onedir) to produce a self-contained
+`.app`: the bootloader at `Contents/MacOS/M Maps` loads Python in-process (no
+nested Python.app identity for Dock / Cmd+Tab). App code and dependencies are
+collected into the bundle. Build with the project venv after
+`pip install -r requirements.txt` and `pip install 'pyinstaller>=6.0'`.
 
 Then either:
 

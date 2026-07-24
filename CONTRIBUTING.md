@@ -47,9 +47,14 @@ More usage notes live in the [README](README.md).
 
 ## How we take contributions
 
+`main` is protected: **no direct pushes**. Everything lands via a pull request
+with at least one approving review (including maintainers). Day-to-day work
+usually branches from **`develop`** and opens a PR into `develop` first; when a
+set of changes is ready, `develop` is merged to `main` via another PR.
+
 1. Open an issue first if the change is large or unclear — saves everyone time.
-2. Fork (or branch from `main`), do the work, and open a **pull request**.
-3. PRs need a clear description and a review/approval before merging to `main`.
+2. Fork (or branch from `develop`), do the work, and open a **pull request**.
+3. PRs need a clear description and a review/approval before merging.
 4. Keep the PR scoped: one idea or fix per PR is easier to review than a kitchen
    sink.
 

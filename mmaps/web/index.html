@@ -23,25 +23,94 @@
   <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
 
   <style>
+    /*
+     * Visual language: liquid-glass panels over the map.
+     * Palette is slate + indigo (not flat single-blue). Functional layout
+     * and selectors are unchanged — style only.
+     */
     :root {
-      --bg: #0b0e14;
-      --panel: #141a23;
-      --panel-2: #1b2430;
-      --border: #273140;
-      --text: #e6edf3;
-      --muted: #90a0b3;
-      --accent: #3b82f6;
+      --bg: #0c0f14;
+      /* Solid fallbacks (also used when backdrop-filter is unavailable). */
+      --panel: rgba(22, 26, 34, 0.88);
+      --panel-2: rgba(32, 38, 50, 0.72);
+      --panel-solid: #161a22;
+      --panel-2-solid: #202632;
+      /* Glass fill — low opacity so the map blurs through. */
+      --glass: rgba(22, 26, 34, 0.42);
+      --glass-strong: rgba(18, 22, 30, 0.58);
+      --glass-chip: rgba(255, 255, 255, 0.08);
+      --glass-border: rgba(255, 255, 255, 0.14);
+      --glass-border-strong: rgba(255, 255, 255, 0.22);
+      --glass-highlight: inset 0 1px 0 rgba(255, 255, 255, 0.12);
+      --glass-shadow:
+        var(--glass-highlight),
+        0 1px 2px rgba(0, 0, 0, 0.18),
+        0 12px 40px rgba(0, 0, 0, 0.28);
+      --blur: 22px;
+      /* High-contrast text for glass over any basemap. */
+      --text: #f2f5f9;
+      --muted: #b4c0d0;
+      /* Indigo accent — refined, less "default blue button". */
+      --accent: #6d7cff;
+      --accent-strong: #5a68f0;
+      --accent-soft: rgba(109, 124, 255, 0.22);
       --fly: #2dd4bf;
-      --danger: #ef4444;
-      --ok: #22c55e;
-      --warn: #f59e0b;
-      --radius: 10px;
-      --shadow: 0 10px 30px rgba(0,0,0,0.45);
+      --danger: #f07178;
+      --ok: #3dd68c;
+      --warn: #f0b429;
+      --radius: 12px;
+      --radius-sm: 9px;
+      --shadow: var(--glass-shadow);
       --safe-top: env(safe-area-inset-top, 0px);
       --safe-bottom: env(safe-area-inset-bottom, 0px);
       --safe-left: env(safe-area-inset-left, 0px);
       --safe-right: env(safe-area-inset-right, 0px);
     }
+
+    /* Shared glass recipe — always pair -webkit- for WebKit/pywebview. */
+    .glass,
+    header,
+    #controls,
+    #searchResults,
+    #tripList,
+    #findPanel,
+    #goPanel,
+    #moveBar,
+    #hint,
+    #updateBanner,
+    #devicePrompt,
+    #lanBanner,
+    #banner {
+      background: var(--glass);
+      border-color: var(--glass-border);
+      -webkit-backdrop-filter: saturate(160%) blur(var(--blur));
+      backdrop-filter: saturate(160%) blur(var(--blur));
+      box-shadow: var(--glass-shadow);
+    }
+
+    @supports not ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
+      .glass,
+      header,
+      #controls,
+      #searchResults,
+      #tripList,
+      #findPanel,
+      #goPanel,
+      #moveBar,
+      #hint,
+      #updateBanner,
+      #devicePrompt,
+      #lanBanner,
+      #banner {
+        background: var(--panel-solid);
+        -webkit-backdrop-filter: none;
+        backdrop-filter: none;
+      }
+      .chip, .seg, .searchRow input, #styleSelect, button.ghost, button:not(.primary):not(.danger) {
+        background: var(--panel-2-solid) !important;
+      }
+    }
+
     * { box-sizing: border-box; }
     html, body { margin: 0; height: 100%; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; }
     body {
@@ -53,25 +122,51 @@
     /* ---- Header / status bar ------------------------------------------- */
     header {
       display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
-      padding: 10px 16px; background: var(--panel); border-bottom: 1px solid var(--border);
+      padding: 10px 16px;
+      border-bottom: 1px solid var(--glass-border);
+      background: var(--glass-strong);
+      z-index: 30;
     }
-    .brand { font-weight: 650; font-size: 15px; letter-spacing: 0.2px; white-space: nowrap; }
-    .sep { width: 1px; height: 22px; background: var(--border); flex-shrink: 0; }
+    .brand {
+      font-weight: 650; font-size: 15px; letter-spacing: 0.2px; white-space: nowrap;
+      color: var(--text);
+      text-shadow: 0 1px 1px rgba(0,0,0,0.35);
+    }
+    .sep {
+      width: 1px; height: 22px; flex-shrink: 0;
+      background: var(--glass-border-strong);
+    }
     .chips { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; min-width: 0; flex: 1 1 auto; }
     .chip {
       display: inline-flex; align-items: center; gap: 6px;
-      background: var(--panel-2); border: 1px solid var(--border); border-radius: 999px;
+      background: var(--glass-chip);
+      border: 1px solid var(--glass-border);
+      border-radius: 999px;
       padding: 4px 10px; font-size: 12.5px; color: var(--muted); white-space: nowrap;
+      -webkit-backdrop-filter: blur(12px);
+      backdrop-filter: blur(12px);
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.08);
     }
     .chip b { color: var(--text); font-weight: 600; }
+    #versionChip {
+      border-color: rgba(109, 124, 255, 0.35);
+      color: #c8d0ff;
+    }
+    #versionChip b { color: #e8ebff; }
     .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); flex-shrink: 0; }
-    .dot.ok { background: var(--ok); } .dot.warn { background: var(--warn); } .dot.err { background: var(--danger); }
+    .dot.ok { background: var(--ok); box-shadow: 0 0 0 2px rgba(61,214,140,0.25); }
+    .dot.warn { background: var(--warn); }
+    .dot.err { background: var(--danger); }
     .spacer { flex: 1; min-width: 8px; }
     .headerActions { display: flex; gap: 8px; align-items: center; flex-shrink: 0; }
     #styleSelect {
       font: inherit; font-size: 12.5px; font-weight: 600; color: var(--text);
-      background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px;
+      background: var(--glass-chip);
+      border: 1px solid var(--glass-border);
+      border-radius: var(--radius-sm);
       padding: 7px 10px; max-width: 140px; cursor: pointer;
+      -webkit-backdrop-filter: blur(12px);
+      backdrop-filter: blur(12px);
     }
     /* Compact Normal / 3D camera toggle (independent of color style). */
     #viewSeg.seg button {
@@ -81,7 +176,10 @@
     /* ---- Control bar: search + mode + speed ---------------------------- */
     #controls {
       display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
-      padding: 10px 16px; background: var(--panel); border-bottom: 1px solid var(--border);
+      padding: 10px 16px;
+      border-bottom: 1px solid var(--glass-border);
+      background: var(--glass);
+      z-index: 20;
     }
     .controlGroup {
       display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-width: 0;
@@ -93,25 +191,34 @@
     .searchRow input {
       flex: 1; min-width: 0;
       font: inherit; font-size: 13px; color: var(--text);
-      background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px;
+      background: var(--glass-chip);
+      border: 1px solid var(--glass-border);
+      border-radius: var(--radius-sm);
       padding: 8px 11px;
+      -webkit-backdrop-filter: blur(12px);
+      backdrop-filter: blur(12px);
     }
     .searchRow input::placeholder { color: var(--muted); }
-    .searchRow input:focus { outline: none; border-color: var(--accent); }
+    .searchRow input:focus {
+      outline: none;
+      border-color: rgba(109, 124, 255, 0.65);
+      box-shadow: 0 0 0 3px var(--accent-soft);
+    }
     #searchResults {
       display: none; position: absolute; left: 0; right: 0; top: calc(100% + 4px);
       z-index: 20; max-height: 240px; overflow: auto;
-      background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius);
-      box-shadow: var(--shadow);
+      background: var(--glass-strong);
+      border: 1px solid var(--glass-border);
+      border-radius: var(--radius);
     }
     #searchResults button {
       display: block; width: 100%; text-align: left; border: none; border-radius: 0;
-      border-bottom: 1px solid var(--border); background: transparent;
+      border-bottom: 1px solid var(--glass-border); background: transparent;
       padding: 10px 12px; font-weight: 500; font-size: 12.5px; line-height: 1.35;
       color: var(--text); cursor: pointer;
     }
     #searchResults button:last-child { border-bottom: none; }
-    #searchResults button:hover { background: var(--panel-2); }
+    #searchResults button:hover { background: rgba(255,255,255,0.08); }
     #searchResults .name { font-weight: 600; }
     #searchResults .sub { color: var(--muted); font-size: 11.5px; margin-top: 2px; }
     #searchResults .empty { padding: 12px; font-size: 12.5px; color: var(--muted); }
@@ -119,20 +226,27 @@
     /* Segmented mode control — room for multi-stop / joystick later */
     .seg {
       display: inline-flex; flex-wrap: wrap; gap: 0;
-      background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px;
+      background: var(--glass-chip);
+      border: 1px solid var(--glass-border);
+      border-radius: var(--radius-sm);
       overflow: hidden;
+      -webkit-backdrop-filter: blur(12px);
+      backdrop-filter: blur(12px);
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.06);
     }
     .seg button {
       border: none !important; border-radius: 0; background: transparent;
-      border-right: 1px solid var(--border) !important; padding: 8px 12px;
+      border-right: 1px solid var(--glass-border) !important; padding: 8px 12px;
       font-size: 12.5px; font-weight: 600; color: var(--muted);
       cursor: pointer; user-select: none; -webkit-user-select: none;
     }
     .seg button:last-child { border-right: none !important; }
-    .seg button:hover { color: var(--text); background: rgba(255,255,255,0.06); }
+    .seg button:hover { color: var(--text); background: rgba(255,255,255,0.08); }
     .seg button.active,
     .seg button.active:hover {
-      background: var(--accent) !important; color: #fff !important;
+      background: linear-gradient(180deg, #7b88ff 0%, var(--accent-strong) 100%) !important;
+      color: #fff !important;
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.2);
     }
     .seg button:disabled {
       opacity: 0.45; cursor: default; color: var(--muted);
@@ -145,7 +259,9 @@
     #tripGroup.visible { display: flex; }
     #tripList {
       flex: 1 1 200px; min-width: 160px; max-width: 420px;
-      background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px;
+      background: var(--glass-chip);
+      border: 1px solid var(--glass-border);
+      border-radius: var(--radius-sm);
       padding: 8px 10px; font-size: 12.5px; color: var(--muted);
       max-height: 120px; overflow: auto;
     }
@@ -157,13 +273,13 @@
       letter-spacing: 0.4px; padding: 1px 6px; border-radius: 999px; margin-left: 6px;
       vertical-align: middle;
     }
-    #tripList .legtag.fly { background: rgba(45,212,191,0.2); color: var(--fly); }
-    #tripList .legtag.drive { background: rgba(59,130,246,0.2); color: var(--accent); }
+    #tripList .legtag.fly { background: rgba(45,212,191,0.22); color: #7ef0df; }
+    #tripList .legtag.drive { background: var(--accent-soft); color: #c5cbff; }
     #tripActions { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
     .stop-marker {
       width: 26px; height: 26px; border-radius: 50%;
       background: var(--warn); color: #1a1200; font: 700 12px/26px -apple-system, system-ui, sans-serif;
-      text-align: center; border: 2px solid #fff; box-shadow: 0 2px 8px rgba(0,0,0,0.35);
+      text-align: center; border: 2px solid rgba(255,255,255,0.9); box-shadow: 0 2px 8px rgba(0,0,0,0.35);
       cursor: default; user-select: none;
     }
     .stop-marker.airport {
@@ -176,40 +292,66 @@
     /* ---- Buttons ------------------------------------------------------- */
     button {
       font: inherit; font-size: 13px; font-weight: 600; line-height: 1;
-      border: 1px solid var(--border); background: var(--panel-2); color: var(--text);
-      padding: 8px 13px; border-radius: 8px; cursor: pointer; transition: border-color .12s, background .12s;
+      border: 1px solid var(--glass-border);
+      background: var(--glass-chip);
+      color: var(--text);
+      padding: 8px 13px; border-radius: var(--radius-sm);
+      cursor: pointer;
+      transition: border-color .12s, background .12s, box-shadow .12s;
       -webkit-tap-highlight-color: transparent;
+      -webkit-backdrop-filter: blur(10px);
+      backdrop-filter: blur(10px);
     }
-    button:hover { border-color: var(--muted); }
+    button:hover { border-color: var(--glass-border-strong); background: rgba(255,255,255,0.12); }
     button:disabled { opacity: 0.4; cursor: default; }
-    button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
-    button.danger { background: transparent; border-color: var(--danger); color: #fca5a5; }
-    button.danger:hover { background: rgba(239,68,68,0.12); }
-    /* Opaque ghost so Cancel stays legible on light map tiles. */
-    button.ghost {
-      background: var(--panel-2); border-color: var(--border); color: var(--text);
+    button.primary {
+      background: linear-gradient(180deg, #7b88ff 0%, var(--accent-strong) 100%);
+      border-color: rgba(109, 124, 255, 0.55);
+      color: #fff;
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.22), 0 4px 14px rgba(90, 104, 240, 0.28);
+      -webkit-backdrop-filter: none;
+      backdrop-filter: none;
     }
-    button.ghost:hover { border-color: var(--muted); }
+    button.primary:hover {
+      background: linear-gradient(180deg, #8b96ff 0%, #6572f5 100%);
+      border-color: rgba(140, 150, 255, 0.7);
+    }
+    button.danger {
+      background: rgba(240, 113, 120, 0.1);
+      border-color: rgba(240, 113, 120, 0.45);
+      color: #ffc9cc;
+    }
+    button.danger:hover { background: rgba(240, 113, 120, 0.18); }
+    /* Ghost: still glass so Cancel stays legible on light map tiles. */
+    button.ghost {
+      background: var(--glass-chip);
+      border-color: var(--glass-border);
+      color: var(--text);
+    }
+    button.ghost:hover { border-color: var(--glass-border-strong); }
 
     #map { flex: 1; position: relative; min-height: 0; }
 
     /* ---- Banners ------------------------------------------------------- */
     #lanBanner {
       display: none; padding: 8px 16px; font-size: 12.5px; line-height: 1.35;
-      background: rgba(239,68,68,0.14); color: #fecaca; border-bottom: 1px solid rgba(239,68,68,0.35);
+      background: rgba(240, 113, 120, 0.2);
+      color: #ffd0d3;
+      border-bottom: 1px solid rgba(240, 113, 120, 0.4);
     }
     #lanBanner b { color: #fff; font-weight: 650; }
     /* Device-confirm prompt: same visual weight as color-coded banners. */
     #devicePrompt {
       display: none; padding: 10px 16px;
-      background: rgba(59,130,246,0.12); border-bottom: 1px solid rgba(59,130,246,0.4);
+      background: rgba(109, 124, 255, 0.18);
+      border-bottom: 1px solid rgba(109, 124, 255, 0.4);
     }
     #devicePrompt .devicePromptInner {
       display: flex; align-items: flex-start; gap: 12px;
     }
     #devicePrompt .devicePromptIcon {
       flex-shrink: 0; width: 10px; height: 10px; margin-top: 5px; border-radius: 50%;
-      background: var(--accent); box-shadow: 0 0 0 3px rgba(59,130,246,0.28);
+      background: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft);
     }
     #devicePrompt .devicePromptBody { flex: 1; min-width: 0; }
     #devicePrompt #devicePromptText {
@@ -218,35 +360,62 @@
     #devicePrompt .devicePromptActions { display: flex; gap: 8px; flex-wrap: wrap; }
     #banner {
       display: none; padding: 9px 16px; font-size: 13px;
-      background: rgba(245,158,11,0.12); color: #f5d38a; border-bottom: 1px solid rgba(245,158,11,0.3);
+      background: rgba(240, 180, 41, 0.16);
+      color: #ffe2a0;
+      border-bottom: 1px solid rgba(240, 180, 41, 0.35);
     }
     /* Fatal errors use danger red; advisories stay amber. */
     #banner.banner-error {
-      background: rgba(239,68,68,0.16); color: #fecaca; border-bottom-color: rgba(239,68,68,0.4);
+      background: rgba(240, 113, 120, 0.2);
+      color: #ffd0d3;
+      border-bottom-color: rgba(240, 113, 120, 0.45);
     }
     #banner.banner-warn {
-      background: rgba(245,158,11,0.12); color: #f5d38a; border-bottom-color: rgba(245,158,11,0.3);
+      background: rgba(240, 180, 41, 0.16);
+      color: #ffe2a0;
+      border-bottom-color: rgba(240, 180, 41, 0.35);
     }
-    /* Optional update notice — soft blue, never blocks the app. */
+    /*
+     * Update notice — same glass system, but with a stronger accent edge so
+     * a real update is hard to miss (still non-blocking).
+     */
     #updateBanner {
       display: none; align-items: center; gap: 12px; flex-wrap: wrap;
-      padding: 8px 16px; font-size: 12.5px; line-height: 1.35;
-      background: rgba(59,130,246,0.12); color: #bfdbfe;
-      border-bottom: 1px solid rgba(59,130,246,0.35);
+      padding: 10px 16px; font-size: 13px; line-height: 1.4;
+      background: rgba(109, 124, 255, 0.28);
+      color: #e4e8ff;
+      border-bottom: 1px solid rgba(140, 155, 255, 0.55);
+      box-shadow:
+        inset 0 1px 0 rgba(255,255,255,0.14),
+        inset 3px 0 0 0 var(--accent),
+        0 8px 28px rgba(90, 104, 240, 0.18);
     }
-    #updateBanner b { color: #fff; font-weight: 650; }
+    #updateBanner b { color: #fff; font-weight: 700; letter-spacing: 0.1px; }
     #updateBanner a, #updateBanner button.linkish {
-      color: #93c5fd; font-weight: 650; text-decoration: underline;
+      color: #c8d0ff; font-weight: 700; text-decoration: underline;
+      text-underline-offset: 2px;
       background: none; border: none; padding: 0; cursor: pointer; font: inherit;
     }
+    #updateBanner a:hover, #updateBanner button.linkish:hover { color: #fff; }
     #updateBanner .updateDismiss {
       margin-left: auto; font-size: 12px; font-weight: 600;
-      color: var(--muted); background: transparent; border: 1px solid var(--border);
-      padding: 4px 10px; border-radius: 6px; cursor: pointer;
+      color: var(--text);
+      background: var(--glass-chip);
+      border: 1px solid var(--glass-border);
+      padding: 5px 12px; border-radius: 8px; cursor: pointer;
+      -webkit-backdrop-filter: blur(10px);
+      backdrop-filter: blur(10px);
     }
-    #updateBanner .updateDismiss:hover { border-color: var(--muted); color: var(--text); }
+    #updateBanner .updateDismiss:hover {
+      border-color: var(--glass-border-strong);
+      color: #fff;
+      background: rgba(255,255,255,0.12);
+    }
 
-    .tlabel { font-size: 11px; text-transform: uppercase; letter-spacing: 0.6px; color: var(--muted); }
+    .tlabel {
+      font-size: 11px; text-transform: uppercase; letter-spacing: 0.6px;
+      color: var(--muted); font-weight: 600;
+    }
 
     /* ---- Bottom-center cards ------------------------------------------- */
     .floatCenter {
@@ -254,14 +423,19 @@
       transform: translateX(-50%); z-index: 5; max-width: min(440px, calc(100vw - 24px));
     }
     #hint {
-      background: rgba(20,26,35,0.92); border: 1px solid var(--border);
+      background: var(--glass-strong);
+      border: 1px solid var(--glass-border);
       padding: 7px 14px; border-radius: 999px; font-size: 13px; color: var(--muted);
       pointer-events: none; white-space: nowrap; text-align: center;
+      text-shadow: 0 1px 2px rgba(0,0,0,0.4);
     }
     /* Shared card chrome for find + go panels. */
     #findPanel, #goPanel {
-      display: none; background: var(--panel); border: 1px solid var(--border);
-      border-radius: var(--radius); padding: 13px 15px; box-shadow: var(--shadow);
+      display: none;
+      background: var(--glass-strong);
+      border: 1px solid var(--glass-border);
+      border-radius: var(--radius);
+      padding: 13px 15px;
       width: max-content; max-width: min(440px, calc(100vw - 24px));
     }
     #findPanel .title, #goPanel .title {
@@ -274,11 +448,13 @@
 
     #moveBar {
       display: none; align-items: center; gap: 14px;
-      background: var(--panel); border: 1px solid var(--border); border-radius: 999px;
-      padding: 8px 8px 8px 16px; box-shadow: var(--shadow);
+      background: var(--glass-strong);
+      border: 1px solid var(--glass-border);
+      border-radius: 999px;
+      padding: 8px 8px 8px 16px;
     }
     #moveBar .label { font-size: 13px; color: var(--text); }
-    #moveBar .label b { color: var(--accent); }
+    #moveBar .label b { color: #c5cbff; }
 
     @media (max-width: 720px) {
       header { gap: 8px 10px; padding: 8px 10px; align-items: flex-start; }
@@ -322,6 +498,7 @@
       <span class="chip">State <b id="state">—</b></span>
       <span class="chip" id="spoofChip">Spoof <b id="spoofState">not spoofing</b></span>
       <span class="chip" id="coordsChip" style="display:none">Location <b id="coords"></b></span>
+      <span class="chip" id="versionChip" title="Running app version">v<b id="appVersion">—</b></span>
     </div>
     <div class="spacer"></div>
     <div class="headerActions">
@@ -1794,7 +1971,8 @@
     // Public GitHub Releases API — no token. Fail silently offline.
     const UPDATE_LS_KEY = 'mmaps-update-check-at';
     const UPDATE_DISMISS_KEY = 'mmaps-update-dismissed-tag';
-    const UPDATE_INTERVAL_MS = 24 * 60 * 60 * 1000; // once per day
+    // During active development, check at most once per hour (not once/day).
+    const UPDATE_INTERVAL_MS = 60 * 60 * 1000;
     let appVersion = null;
     let githubRepo = 'mayoka0/m-maps';
     let updateCheckStarted = false;
@@ -1840,14 +2018,15 @@
       hideUpdateBanner();
     });
 
-    async function checkForUpdates(version, repo) {
+    async function checkForUpdates(version, repo, { force = false } = {}) {
       if (!version) return;
       appVersion = version;
+      if ($('appVersion')) $('appVersion').textContent = version;
       if (repo) githubRepo = repo;
       try {
         const now = Date.now();
         const last = parseInt(localStorage.getItem(UPDATE_LS_KEY) || '0', 10) || 0;
-        if (last && (now - last) < UPDATE_INTERVAL_MS) return;
+        if (!force && last && (now - last) < UPDATE_INTERVAL_MS) return;
         localStorage.setItem(UPDATE_LS_KEY, String(now));
       } catch (e) {
         // localStorage unavailable — still try once this session.
@@ -1862,7 +2041,10 @@
         const data = await res.json();
         const tag = data.tag_name || '';
         const url = data.html_url || ('https://github.com/' + githubRepo + '/releases');
-        if (!isNewerRelease(tag, version)) return;
+        if (!isNewerRelease(tag, version)) {
+          // Already latest — no banner (correct). Version chip still shows current.
+          return;
+        }
         try {
           if (localStorage.getItem(UPDATE_DISMISS_KEY) === tag) return;
         } catch (e) {}
@@ -1879,9 +2061,30 @@
       updateCheckStarted = true;
       try {
         const s = await (await fetch('/status')).json();
+        if (s.version && $('appVersion')) $('appVersion').textContent = s.version;
         await checkForUpdates(s.version, s.github_repo);
       } catch (e) { /* silent */ }
     })();
+
+    // Manual re-check: click the version chip in the header.
+    if ($('versionChip')) {
+      $('versionChip').style.cursor = 'pointer';
+      $('versionChip').title = 'Running version — click to check for updates';
+      $('versionChip').addEventListener('click', async () => {
+        try {
+          localStorage.removeItem(UPDATE_LS_KEY);
+        } catch (e) {}
+        try {
+          const s = await (await fetch('/status')).json();
+          await checkForUpdates(s.version, s.github_repo, { force: true });
+          // Soft feedback when already up to date (banner stays hidden).
+          if ($('updateBanner').style.display !== 'flex') {
+            showBanner('You’re on the latest release (v' + (s.version || '?') + ').', 'warn');
+            setTimeout(() => { if (bannerKind === 'warn') hideBanner(); }, 3500);
+          }
+        } catch (e) { /* silent */ }
+      });
+    }
   </script>
 </body>
 </html>

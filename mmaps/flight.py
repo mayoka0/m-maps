@@ -26,7 +26,9 @@ PLANE_SPEED_KMH = 900.0
 SPEED_PRESETS = {"slow": 60.0, "normal": 120.0, "fast": 240.0}
 DEFAULT_SPEED = "normal"
 
-TICK_SECONDS = 1.0
+# Slightly finer than the old 1 s so the fly path doesn't look like discrete
+# hops on the map; still coarse enough for time-compressed long hauls.
+TICK_SECONDS = 0.25
 # Planes track smoothly; no jitter (unlike a car nudging along a road).
 JITTER_METERS = 0.0
 

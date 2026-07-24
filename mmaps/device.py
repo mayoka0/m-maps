@@ -47,19 +47,44 @@ class NoDeviceError(RuntimeError):
     """Raised when no iPhone is visible over USB."""
 
 
-async def connect(autopair: bool = False, pair_timeout: Optional[float] = None):
-    """Connect to the first USB-attached device over lockdownd.
+async def connect(
+    autopair: bool = False,
+    pair_timeout: Optional[float] = None,
+    serial: Optional[str] = None,
+):
+    """Connect to a USB-attached device over lockdownd.
 
     :param autopair: if True and the device isn't paired yet, actively request
         pairing — this is what makes the "Trust This Computer?" dialog appear.
+    :param serial: usbmux serial (UDID) of the target phone, or ``None`` for
+        the first USB device. Prefer an explicit serial when the user confirmed
+        a specific phone (two devices on one Mac).
     :raises NoDeviceError: nothing is plugged in / visible over USB.
     """
     devices = await usbmux.list_devices()
-    if not any(d.is_usb for d in devices):
+    usb = [d for d in devices if getattr(d, "is_usb", False)]
+    if not usb:
         raise NoDeviceError("No iPhone detected over USB. Plug it in, unlock it, and try again.")
+
+    target_serial: Optional[str] = None
+    if serial:
+        want = serial.replace("-", "").strip().lower()
+        for d in usb:
+            have = (getattr(d, "serial", None) or "").replace("-", "").strip().lower()
+            if have and have == want:
+                target_serial = d.serial
+                break
+        if target_serial is None:
+            raise NoDeviceError(
+                "The confirmed iPhone is not visible over USB. "
+                "Plug it in, unlock it, and try again."
+            )
+    else:
+        target_serial = usb[0].serial
 
     try:
         return await create_using_usbmux(
+            serial=target_serial,
             autopair=autopair,
             pair_timeout=pair_timeout,
             pairing_records_cache_folder=pairing_cache_dir(),
@@ -100,44 +125,77 @@ def print_status(status: dict) -> None:
     print(f"Developer Mode:  {dev_mode_text}")
 
 
-async def ensure_trusted(client):
-    """Make sure the Mac is trusted by the phone, guiding the user through it if not.
+async def ensure_trusted(client, *, serial: Optional[str] = None, interactive: bool = True):
+    """Make sure the Mac is trusted by the phone.
 
-    Returns a (possibly reconnected) client that is paired. Raises RuntimeError
-    with a human-readable message if trust can't be established.
+    When not already paired, reconnects with ``autopair=True`` so iOS shows
+    "Trust This Computer?". Works headless (desktop app / elevated server):
+    no stdin required — just waits for the phone dialog.
+
+    :param interactive: if True, print CLI guidance (``serve`` / terminal).
+    :returns: a (possibly reconnected) paired client.
     """
     if client.paired:
         return client
 
-    print()
-    print("This Mac isn't trusted by the phone yet.")
-    print("Look at the iPhone screen now: tap \"Trust\" on the \"Trust This Computer?\" prompt")
-    print("and enter your passcode if asked.")
-    print(f"Waiting up to {TRUST_DIALOG_TIMEOUT}s for a response...")
+    serial = serial or getattr(client, "udid", None)
+
+    if interactive:
+        print()
+        print("This Mac isn't trusted by the phone yet.")
+        print(
+            'Look at the iPhone screen now: tap "Trust" on the '
+            '"Trust This Computer?" prompt and enter your passcode if asked.'
+        )
+        print(f"Waiting up to {TRUST_DIALOG_TIMEOUT}s for a response...")
 
     await client.close()
     try:
-        client = await connect(autopair=True, pair_timeout=TRUST_DIALOG_TIMEOUT)
+        client = await connect(
+            autopair=True,
+            pair_timeout=TRUST_DIALOG_TIMEOUT,
+            serial=serial,
+        )
     except PairingDialogResponsePendingError as e:
         raise RuntimeError(
-            "Timed out waiting for you to tap Trust on the phone. Unlock the phone and run this again."
+            "Timed out waiting for you to tap Trust on the phone. "
+            "Unlock the iPhone, keep it plugged in, and try again."
         ) from e
     except UserDeniedPairingError as e:
         raise RuntimeError(
-            "Pairing was declined on the phone (\"Don't Trust\"). Run this again and tap Trust to proceed."
+            'Pairing was declined on the phone ("Don\'t Trust"). '
+            "Confirm again and tap Trust to proceed."
         ) from e
 
     if not client.paired:
-        raise RuntimeError("Still not trusted after pairing attempt. Unlock the phone and try again.")
+        raise RuntimeError(
+            "Still not trusted after pairing attempt. Unlock the phone and try again."
+        )
 
-    print("Trusted.")
+    if interactive:
+        print("Trusted.")
     return client
 
 
-async def ensure_developer_mode(client, auto_enable: bool = True) -> bool:
-    """Make sure Developer Mode is on, offering to enable it if it's off.
+DEVELOPER_MODE_OFF_MESSAGE = (
+    "Developer Mode is OFF on this iPhone (required to spoof location). "
+    "On the phone: Settings → Privacy & Security → Developer Mode → turn it on, "
+    "allow the restart, then tap Turn On and enter your passcode. "
+    "Keep USB plugged in and confirm the device again."
+)
+
+
+async def ensure_developer_mode(
+    client,
+    auto_enable: bool = True,
+    *,
+    interactive: bool = True,
+) -> bool:
+    """Make sure Developer Mode is on.
 
     Returns True if Developer Mode ends up enabled, False otherwise.
+    Headless (desktop) path never uses ``input()`` — it only reports status
+    (and may still auto-enable when ``auto_enable=True`` without a prompt).
     """
     try:
         enabled = await client.get_developer_mode_status()
@@ -147,19 +205,26 @@ async def ensure_developer_mode(client, auto_enable: bool = True) -> bool:
     if enabled:
         return True
 
-    print()
-    print("Developer Mode is OFF on this iPhone. Setting a location requires it.")
+    if interactive:
+        print()
+        print("Developer Mode is OFF on this iPhone. Setting a location requires it.")
 
     if not auto_enable:
-        _print_manual_developer_mode_steps()
+        if interactive:
+            _print_manual_developer_mode_steps()
         return False
 
-    answer = input("Enable Developer Mode now? This will reboot the iPhone. [Y/n] ").strip().lower()
-    if answer not in ("", "y", "yes"):
-        _print_manual_developer_mode_steps()
-        return False
+    if interactive:
+        answer = input(
+            "Enable Developer Mode now? This will reboot the iPhone. [Y/n] "
+        ).strip().lower()
+        if answer not in ("", "y", "yes"):
+            _print_manual_developer_mode_steps()
+            return False
+        print("Requesting Developer Mode... the iPhone will reboot. Keep it plugged in.")
+    # Desktop / elevated: no stdin — request enable when auto_enable is True.
+    # AmfiService handles reboot + reconnect when enable_post_restart=True.
 
-    print("Requesting Developer Mode... the iPhone will reboot. Keep it plugged in.")
     try:
         await AmfiService(client).enable_developer_mode(enable_post_restart=True)
     except DeviceHasPasscodeSetError as e:
@@ -170,12 +235,16 @@ async def ensure_developer_mode(client, auto_enable: bool = True) -> bool:
     except (AmfiError, DeveloperModeError) as e:
         raise RuntimeError(f"Failed to enable Developer Mode: {e}") from e
 
-    print("Developer Mode enabled and confirmed after restart.")
+    if interactive:
+        print("Developer Mode enabled and confirmed after restart.")
     return True
 
 
 def _print_manual_developer_mode_steps() -> None:
     print("To enable it yourself:")
     print("  Settings -> Privacy & Security -> Developer Mode -> turn it on")
-    print("  -> the phone will ask to restart -> after restart, tap Turn On, then enter your passcode.")
+    print(
+        "  -> the phone will ask to restart -> after restart, tap Turn On, "
+        "then enter your passcode."
+    )
     print("Then run this tool again.")

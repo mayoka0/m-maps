@@ -54,15 +54,16 @@ deletion**. Everything lands via a pull request.
 
 ### Branch layout
 
+Only two long-lived branches:
+
 | Branch | Role |
 |--------|------|
 | `main` | Protected release line; tags (`vX.Y.Z`) are cut from here. |
-| `develop` | Day-to-day integration branch (same baseline as `main` after v1.0.3). |
-| `public-release` | Kept as a release-history branch; not deleted. |
+| `develop` | Day-to-day work; open PRs land here first. |
 
-Day-to-day work usually branches from **`develop`** and opens a PR into
-`develop` first; when a set of changes is ready, `develop` is merged to `main`
-via another PR (or a direct PR to `main` for small fixes).
+Feature work uses short-lived branches (e.g. `fix/…`) that are **deleted after
+merge**. Flow: branch from **`develop`** → PR into `develop` → when ready for
+release, merge **`develop` → `main`**.
 
 ### Solo-maintainer review policy (temporary)
 

@@ -15,3 +15,8 @@ CLAUDE.md
 Claude.md
 BUGS.md
 BUGS2.md
+
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/

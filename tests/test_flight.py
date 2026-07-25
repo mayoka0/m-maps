@@ -1,7 +1,14 @@
 """Offline tests for great-circle flight math (no phone)."""
 import random
 
-from mmaps.flight import gc_interpolate, resample_flight
+from mmaps.flight import (
+    PLANE_SPEED_KMH,
+    SPEED_PRESETS,
+    TICK_SECONDS,
+    effective_speed_kmh,
+    gc_interpolate,
+    resample_flight,
+)
 from mmaps.route import haversine_m
 
 
@@ -9,8 +16,6 @@ def test_gc_interpolate_midpoint_shorter_than_corners():
     a = (48.8566, 2.3522)  # Paris
     b = (40.7128, -74.0060)  # NYC
     mid = gc_interpolate(a, b, 0.5)
-    # Midpoint should be between latitudes
-    assert min(a[0], b[0]) < mid[0] < max(a[0], b[0]) or True  # may cross
     d_full = haversine_m(a, b)
     d_half = haversine_m(a, mid) + haversine_m(mid, b)
     assert abs(d_half - d_full) < d_full * 0.02
@@ -29,3 +34,33 @@ def test_resample_flight_ends_at_destination():
     assert len(pts) >= 1
     assert abs(pts[-1][0] - 48.90) < 1e-5
     assert abs(pts[-1][1] - 2.45) < 1e-5
+
+
+def test_no_time_compression_multipliers():
+    # Presets are mild scales around real cruise, not 60–240× playback.
+    assert SPEED_PRESETS["normal"] == 1.0
+    assert all(0.5 <= v <= 1.5 for v in SPEED_PRESETS.values())
+    assert 800 <= effective_speed_kmh("normal") <= 950
+
+
+def test_long_haul_duration_ballpark():
+    # Nairobi → NYC-ish great-circle ~11_800 km @ 875 km/h → ~13.5 h
+    nbo = ( -1.3192, 36.9275)  # lat, lon approx JKIA
+    jfk = (40.6413, -73.7781)
+    dist_km = haversine_m(nbo, jfk) / 1000.0
+    assert 11_000 < dist_km < 13_000
+    wps = [[nbo[1], nbo[0]], [jfk[1], jfk[0]]]
+    pts = resample_flight(wps, speed="normal", jitter_m=0, rng=random.Random(0))
+    eta_h = (len(pts) * TICK_SECONDS) / 3600.0
+    expected_h = dist_km / PLANE_SPEED_KMH
+    assert abs(eta_h - expected_h) < expected_h * 0.12
+    assert 12.0 < eta_h < 16.0
+
+
+def test_version_beta_helper():
+    from mmaps import __version__, is_beta_version
+
+    assert "beta" in __version__.lower()
+    assert is_beta_version()
+    assert is_beta_version("1.0.4-beta.2")
+    assert not is_beta_version("1.0.3")

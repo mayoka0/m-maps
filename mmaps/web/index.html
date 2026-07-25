@@ -153,6 +153,13 @@
       color: #c8d0ff;
     }
     #versionChip b { color: #e8ebff; }
+    /* Develop / local pre-release builds — never confuse with a public tag. */
+    #versionChip.beta {
+      border-color: rgba(240, 180, 41, 0.55);
+      color: #ffe2a0;
+      background: rgba(240, 180, 41, 0.12);
+    }
+    #versionChip.beta b { color: #fff3c4; }
     .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); flex-shrink: 0; }
     .dot.ok { background: var(--ok); box-shadow: 0 0 0 2px rgba(61,214,140,0.25); }
     .dot.warn { background: var(--warn); }
@@ -1399,7 +1406,7 @@
         [toAirport.lon, toAirport.lat]
       ];
       try {
-        // "normal" time-compression: long hops play out in ~1–3 minutes.
+        // Real cruise speed (no time-compression) — long hauls take real hours.
         const res = await postJSON('/fly', { waypoints, speed: 'normal' });
         activeMoveSpeed = 'fly';
         if (res.applied === false) {
@@ -1977,24 +1984,46 @@
     let githubRepo = 'mayoka0/m-maps';
     let updateCheckStarted = false;
 
-    function parseVersionParts(tag) {
+    function parseSemver(tag) {
+      // "1.0.4-beta.1" → { major, minor, patch, pre: "beta.1" }
       const s = String(tag || '').trim().replace(/^v/i, '');
-      return s.split(/[.+-]/).map((p) => {
-        const n = parseInt(p, 10);
-        return Number.isFinite(n) ? n : 0;
-      });
+      const m = s.match(/^(\d+)\.(\d+)\.(\d+)(?:[-+](.+))?$/);
+      if (!m) {
+        const nums = s.split(/[.+-]/).map((p) => {
+          const n = parseInt(p, 10);
+          return Number.isFinite(n) ? n : 0;
+        });
+        return { major: nums[0] || 0, minor: nums[1] || 0, patch: nums[2] || 0, pre: null };
+      }
+      return {
+        major: parseInt(m[1], 10),
+        minor: parseInt(m[2], 10),
+        patch: parseInt(m[3], 10),
+        pre: m[4] || null,
+      };
     }
     function isNewerRelease(latestTag, currentVersion) {
       if (!latestTag || !currentVersion) return false;
-      const a = parseVersionParts(latestTag);
-      const b = parseVersionParts(currentVersion);
-      const n = Math.max(a.length, b.length);
-      for (let i = 0; i < n; i++) {
-        const x = a[i] || 0, y = b[i] || 0;
-        if (x > y) return true;
-        if (x < y) return false;
-      }
+      const a = parseSemver(latestTag);
+      const b = parseSemver(currentVersion);
+      if (a.major !== b.major) return a.major > b.major;
+      if (a.minor !== b.minor) return a.minor > b.minor;
+      if (a.patch !== b.patch) return a.patch > b.patch;
+      // Same X.Y.Z: a stable release is newer than any beta/rc of that version.
+      if (!a.pre && b.pre) return true;
+      if (a.pre && !b.pre) return false;
+      if (a.pre && b.pre) return a.pre > b.pre;
       return false;
+    }
+    function applyVersionChip(version, isBeta) {
+      if (!$('appVersion') || !$('versionChip')) return;
+      $('appVersion').textContent = version || '—';
+      const chip = $('versionChip');
+      const beta = !!isBeta || /beta|rc|alpha|dev/i.test(String(version || ''));
+      chip.classList.toggle('beta', beta);
+      chip.title = beta
+        ? 'Pre-release / develop build — not a public GitHub release. Click to check for stable updates.'
+        : 'Running version — click to check for updates';
     }
     function showUpdateBanner(tag, url) {
       const bar = $('updateBanner');
@@ -2021,7 +2050,7 @@
     async function checkForUpdates(version, repo, { force = false } = {}) {
       if (!version) return;
       appVersion = version;
-      if ($('appVersion')) $('appVersion').textContent = version;
+      applyVersionChip(version, /beta|rc|alpha|dev/i.test(String(version)));
       if (repo) githubRepo = repo;
       try {
         const now = Date.now();
@@ -2061,7 +2090,7 @@
       updateCheckStarted = true;
       try {
         const s = await (await fetch('/status')).json();
-        if (s.version && $('appVersion')) $('appVersion').textContent = s.version;
+        if (s.version) applyVersionChip(s.version, s.beta);
         await checkForUpdates(s.version, s.github_repo);
       } catch (e) { /* silent */ }
     })();
@@ -2069,17 +2098,20 @@
     // Manual re-check: click the version chip in the header.
     if ($('versionChip')) {
       $('versionChip').style.cursor = 'pointer';
-      $('versionChip').title = 'Running version — click to check for updates';
       $('versionChip').addEventListener('click', async () => {
         try {
           localStorage.removeItem(UPDATE_LS_KEY);
         } catch (e) {}
         try {
           const s = await (await fetch('/status')).json();
+          if (s.version) applyVersionChip(s.version, s.beta);
           await checkForUpdates(s.version, s.github_repo, { force: true });
           // Soft feedback when already up to date (banner stays hidden).
           if ($('updateBanner').style.display !== 'flex') {
-            showBanner('You’re on the latest release (v' + (s.version || '?') + ').', 'warn');
+            const label = s.beta
+              ? 'Develop/beta build ' + (s.version || '?') + ' — check GitHub for stable releases.'
+              : 'You’re on the latest release (v' + (s.version || '?') + ').';
+            showBanner(label, 'warn');
             setTimeout(() => { if (bannerKind === 'warn') hideBanner(); }, 3500);
           }
         } catch (e) { /* silent */ }

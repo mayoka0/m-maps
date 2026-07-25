@@ -65,6 +65,15 @@ Feature work uses short-lived branches (e.g. `fix/…`) that are **deleted after
 merge**. Flow: branch from **`develop`** → PR into `develop` → when ready for
 release, merge **`develop` → `main`**.
 
+### Version numbers
+
+- **Stable / public:** `mmaps/__init__.py` → `__version__ = "X.Y.Z"`, tagged on
+  `main` as `vX.Y.Z` (GitHub Release).
+- **Develop / local beta:** `__version__ = "X.Y.Z-beta.N"` (e.g. `1.0.4-beta.1`).
+  The app’s version chip turns amber and is labeled as a pre-release. Bump `N`
+  on `develop` as you iterate. **Never** tag beta strings as public GitHub
+  Releases — promote by setting a clean `X.Y.Z` when cutting `main`.
+
 ### Solo-maintainer review policy (temporary)
 
 While Mayoka Labs is effectively a **solo maintainer**, the “require an

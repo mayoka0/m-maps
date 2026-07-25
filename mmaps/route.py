@@ -12,14 +12,19 @@ route, not a separate great-circle mode.
 import math
 import random
 
-# Road speed presets in km/h. Keys are what POST /drive accepts as ``mode``
-# (historical field name — it's a speed). Fly is NOT here: planes don't follow
-# roads; the UI uses POST /fly (great-circle) when speed is Fly.
+# Road speed presets in km/h — real-world averages for prank believability.
+# Duration ≈ path_length / speed (no time-compression). Keys are what
+# POST /drive accepts as ``mode`` (historical field name — it's a speed).
+# Fly is NOT here: planes use POST /fly (great-circle).
+#
+# Sanity checks (distance / speed ≈ wall-clock time):
+#   Walk 5 km → ~1 h; Bicycle 16 km → ~1 h; Motorcycle 55 km → ~1 h
+#   Car Detroit→Ann Arbor ~60 km @ 60 km/h → ~1 h (mixed; pure highway ~45 min)
 MODE_SPEEDS_KMH = {
-    "walk": 5.0,
-    "bicycle": 18.0,
-    "motorcycle": 55.0,
-    "car": 90.0,
+    "walk": 5.0,         # pedestrian stroll
+    "bicycle": 16.0,     # casual cycling (15–18 km/h band)
+    "motorcycle": 55.0,  # mixed city/highway pace, not top speed
+    "car": 60.0,         # mixed driving average (not highway-only cruise)
 }
 
 # Stable display order for road speeds (Fly is a separate path in the UI).
@@ -27,14 +32,12 @@ SPEED_PRESET_ORDER = ("walk", "bicycle", "motorcycle", "car")
 DEFAULT_SPEED_PRESET = "car"
 
 # How often we push a new location while driving.
-# 1.0 s made car travel look like stop-go (~25 m jumps at 90 km/h). 0.2 s is
-# five updates per second (~5 m at car speed) — smooth in Find My without
-# hammering the DVT channel.
-TICK_SECONDS = 0.2
+# At car 60 km/h, 0.25 s → ~4.2 m/step — fluid in Find My without huge point lists
+# on multi-hour trips. (Faster ticks at realistic speeds add little visual value.)
+TICK_SECONDS = 0.25
 
-# Light lateral noise so roads don't look laser-straight. Kept small relative
-# to the finer step size so it doesn't reintroduce a "stutter".
-JITTER_METERS = 0.8
+# Lateral noise scaled for the smaller step size (was too large vs ~4 m steps).
+JITTER_METERS = 0.35
 
 _EARTH_RADIUS_M = 6_371_000.0
 _METERS_PER_DEGREE_LAT = 111_320.0

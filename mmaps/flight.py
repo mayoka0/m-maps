@@ -3,9 +3,9 @@
 Fly is Drive without the router: the path is a straight great-circle between
 waypoints (usually current location → destination / nearest airport), not an
 OSRM road route and not a freehand-drawn path. We interpolate along the great
-circle (the realistic shortest path over the sphere) and resample at plane
-speed — time-compressed so a flight that would really take hours plays out
-live in a couple of minutes. The points then feed ``set_target`` on a timer,
+circle (the realistic shortest path over the sphere) and resample at **real
+commercial cruise speed** so a long-haul hop takes roughly real wall-clock time
+(e.g. Nairobi→NYC ~14–15 h). The points then feed ``set_target`` on a timer,
 exactly like Drive.
 
 Pure functions, no I/O.
@@ -15,26 +15,29 @@ import random
 
 from mmaps.route import _clean, _jitter, haversine_m, walk_path
 
-# Realistic cruising speed. On its own this would make a long flight take hours,
-# so we multiply it by a playback factor (time-compression) below.
-PLANE_SPEED_KMH = 900.0
+# Typical jet cruise (mach ~0.8 band). No artificial time-compression multipliers.
+# Sanity: ~11_800 km NBO–JFK / 875 km/h ≈ 13.5 h (door-to-door real flights ~15 h
+# including taxi/climb; pure cruise distance/speed is the right prank scale).
+PLANE_SPEED_KMH = 875.0
 
-# Playback multipliers offered to the UI as a simple speed control (time-
-# compression on top of PLANE_SPEED_KMH). Tuned so a typical hop lands in about
-# 1-3 minutes at "normal": e.g. a ~4,500 km flight is ~2.5 min, a ~1,000 km hop
-# ~30 s. "slow" to savour a long flight, "fast" for long hauls. Easy to tweak.
-SPEED_PRESETS = {"slow": 60.0, "normal": 120.0, "fast": 240.0}
+# Mild variation around real cruise — still realistic jet speeds, not 60–240× playback.
+# effective_kmh = PLANE_SPEED_KMH * SPEED_PRESETS[name]
+SPEED_PRESETS = {
+    "slow": 0.85,    # ~744 km/h
+    "normal": 1.0,   # 875 km/h
+    "fast": 1.1,     # ~963 km/h
+}
 DEFAULT_SPEED = "normal"
 
-# Slightly finer than the old 1 s so the fly path doesn't look like discrete
-# hops on the map; still coarse enough for time-compressed long hauls.
-TICK_SECONDS = 0.25
+# At cruise, 0.5 s → ~120 m/step — smooth for plane-scale motion; half the points
+# of 0.25 s on 15-hour flights (still fine in memory).
+TICK_SECONDS = 0.5
 # Planes track smoothly; no jitter (unlike a car nudging along a road).
 JITTER_METERS = 0.0
 
 
 def effective_speed_kmh(speed: str) -> float:
-    """Plane speed after the chosen time-compression multiplier."""
+    """Plane ground speed (km/h) after the mild slow/normal/fast scale."""
     return PLANE_SPEED_KMH * SPEED_PRESETS.get(speed, SPEED_PRESETS[DEFAULT_SPEED])
 
 
@@ -72,9 +75,9 @@ def resample_flight(waypoints, speed=DEFAULT_SPEED, *, tick_seconds=TICK_SECONDS
         Drive's input) — typically ``[current, destination]`` (destination is
         often the nearest passenger airport). Multi-point waypoint lists are
         supported and joined as sequential great-circle segments.
-    :param speed: a key of ``SPEED_PRESETS`` selecting the time-compression.
-    :returns: (lat, lon) points, great-circle spaced at the compressed plane
-        speed, ending exactly on the final waypoint. Empty input -> empty list.
+    :param speed: a key of ``SPEED_PRESETS`` (mild scale around real cruise).
+    :returns: (lat, lon) points spaced at real cruise speed, ending exactly on
+        the final waypoint. Empty input -> empty list.
     """
     rng = rng or random
     if not waypoints:

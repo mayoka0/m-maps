@@ -18,19 +18,30 @@ def test_haversine_known_short_segment():
 
 
 def test_resample_empty_and_single():
-    assert resample_by_speed([], 90) == []
-    pts = resample_by_speed([[2.0, 48.0]], 90, jitter_m=0)
+    assert resample_by_speed([], 60) == []
+    pts = resample_by_speed([[2.0, 48.0]], 60, jitter_m=0)
     assert pts == [(48.0, 2.0)]
 
 
-def test_resample_car_finer_than_1s():
+def test_resample_finer_tick_more_points():
     coords = [[2.0, 48.0], [2.01, 48.0]]
-    coarse = resample_by_speed(coords, 90, tick_seconds=1.0, jitter_m=0, rng=random.Random(0))
-    fine = resample_by_speed(coords, 90, tick_seconds=0.2, jitter_m=0, rng=random.Random(0))
-    assert len(fine) >= len(coarse) * 4
+    coarse = resample_by_speed(coords, 60, tick_seconds=1.0, jitter_m=0, rng=random.Random(0))
+    fine = resample_by_speed(coords, 60, tick_seconds=0.25, jitter_m=0, rng=random.Random(0))
+    assert len(fine) >= len(coarse) * 3
     # Ends on destination
     assert abs(fine[-1][0] - 48.0) < 1e-6
     assert abs(fine[-1][1] - 2.01) < 1e-6
+
+
+def test_car_duration_roughly_distance_over_speed():
+    # ~60 km east-ish polyline; at 60 km/h ETA ~1 hour of points.
+    coords = [[2.0, 48.0], [2.8, 48.0]]  # ~60 km
+    speed = MODE_SPEEDS_KMH["car"]
+    pts = resample_by_speed(coords, speed, jitter_m=0, rng=random.Random(0))
+    eta_h = (len(pts) * TICK_SECONDS) / 3600.0
+    dist_km = haversine_m((48.0, 2.0), (48.0, 2.8)) / 1000.0
+    expected_h = dist_km / speed
+    assert abs(eta_h - expected_h) < expected_h * 0.15
 
 
 def test_resample_step_matches_speed():

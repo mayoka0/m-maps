@@ -35,7 +35,7 @@ from pydantic import BaseModel
 
 from pymobiledevice3 import usbmux
 
-from mmaps import __version__, airports, device, flight, route
+from mmaps import __version__, airports, device, flight, is_beta_version, route
 from mmaps.errors import humanize_error
 from mmaps.session import SpoofSession
 
@@ -440,6 +440,7 @@ async def status() -> dict:
             "features": FEATURES,
             "lan": _LAN_MODE,
             "version": __version__,
+            "beta": is_beta_version(__version__),
             "github_repo": GITHUB_REPO,
         }
     result = await session.status()
@@ -448,6 +449,7 @@ async def status() -> dict:
     result["pending_device"] = None  # active session owns the phone
     result["spoofing"] = result.get("target") is not None
     result["version"] = __version__
+    result["beta"] = is_beta_version(__version__)
     result["github_repo"] = GITHUB_REPO
     return result
 

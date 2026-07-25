@@ -45,7 +45,8 @@ def test_no_time_compression_multipliers():
 
 def test_long_haul_duration_ballpark():
     # Nairobi → NYC-ish great-circle ~11_800 km @ 875 km/h → ~13.5 h
-    nbo = ( -1.3192, 36.9275)  # lat, lon approx JKIA
+    # Takeoff/landing ease is negligible vs hours of cruise.
+    nbo = (-1.3192, 36.9275)  # lat, lon approx JKIA
     jfk = (40.6413, -73.7781)
     dist_km = haversine_m(nbo, jfk) / 1000.0
     assert 11_000 < dist_km < 13_000
@@ -55,6 +56,20 @@ def test_long_haul_duration_ballpark():
     expected_h = dist_km / PLANE_SPEED_KMH
     assert abs(eta_h - expected_h) < expected_h * 0.12
     assert 12.0 < eta_h < 16.0
+
+
+def test_flight_takeoff_steps_smaller_than_cruise():
+    # Short-ish hop still long enough for a clear cruise middle.
+    # ~200 km east
+    a = (48.0, 2.0)
+    b = (48.0, 4.5)
+    wps = [[a[1], a[0]], [b[1], b[0]]]
+    pts = resample_flight(wps, speed="normal", jitter_m=0, rng=random.Random(0), ease=True)
+    assert len(pts) >= 40
+    start_step = haversine_m(pts[0], pts[1])
+    mid = len(pts) // 2
+    mid_step = haversine_m(pts[mid], pts[mid + 1])
+    assert start_step < mid_step * 0.9
 
 
 def test_version_beta_helper():

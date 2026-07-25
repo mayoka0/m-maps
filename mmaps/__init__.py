@@ -5,7 +5,7 @@ from typing import Optional
 # Public releases: "1.0.3" (matches GitHub tags vX.Y.Z).
 # Local / develop beta builds: "1.0.4-beta.N" — never tag these as public releases.
 # Bump the beta N on develop as you iterate; promote to "1.0.4" only when cutting main.
-__version__ = "1.0.4-beta.1"
+__version__ = "1.0.4-beta.2"
 
 
 def is_beta_version(version: Optional[str] = None) -> bool:

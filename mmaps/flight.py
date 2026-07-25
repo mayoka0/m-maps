@@ -5,15 +5,23 @@ waypoints (usually current location → destination / nearest airport), not an
 OSRM road route and not a freehand-drawn path. We interpolate along the great
 circle (the realistic shortest path over the sphere) and resample at **real
 commercial cruise speed** so a long-haul hop takes roughly real wall-clock time
-(e.g. Nairobi→NYC ~14–15 h). The points then feed ``set_target`` on a timer,
-exactly like Drive.
+(e.g. Nairobi→NYC ~14–15 h). Takeoff/landing use the same cosine speed ease as
+drive (ramp up from rest, ease down into the destination) so the start/end are
+not an instant jump to full cruise.
+
+The points then feed ``set_target`` on a timer, exactly like Drive.
 
 Pure functions, no I/O.
 """
+from __future__ import annotations
+
 import math
 import random
 
-from mmaps.route import _clean, _jitter, haversine_m, walk_path
+from mmaps.route import (
+    _clean,
+    walk_path_eased,
+)
 
 # Typical jet cruise (mach ~0.8 band). No artificial time-compression multipliers.
 # Sanity: ~11_800 km NBO–JFK / 875 km/h ≈ 13.5 h (door-to-door real flights ~15 h
@@ -34,6 +42,11 @@ DEFAULT_SPEED = "normal"
 TICK_SECONDS = 0.5
 # Planes track smoothly; no jitter (unlike a car nudging along a road).
 JITTER_METERS = 0.0
+
+# Takeoff / landing speed ramps (wall-clock seconds of cruise-distance scale).
+# Short vs long-haul: walk_path_eased shrinks ramps when they would dominate.
+TAKEOFF_SECONDS = 45.0
+LANDING_SECONDS = 60.0
 
 
 def effective_speed_kmh(speed: str) -> float:
@@ -67,8 +80,15 @@ def gc_interpolate(a, b, fraction):
     return (math.degrees(lat), math.degrees(lon))
 
 
-def resample_flight(waypoints, speed=DEFAULT_SPEED, *, tick_seconds=TICK_SECONDS,
-                    jitter_m=JITTER_METERS, rng=None):
+def resample_flight(
+    waypoints,
+    speed=DEFAULT_SPEED,
+    *,
+    tick_seconds=TICK_SECONDS,
+    jitter_m=JITTER_METERS,
+    rng=None,
+    ease: bool = True,
+):
     """Resample a great-circle flight into one (lat, lon) point per tick.
 
     :param waypoints: the path as ``[[lon, lat], ...]`` (GeoJSON order, matching
@@ -76,8 +96,10 @@ def resample_flight(waypoints, speed=DEFAULT_SPEED, *, tick_seconds=TICK_SECONDS
         often the nearest passenger airport). Multi-point waypoint lists are
         supported and joined as sequential great-circle segments.
     :param speed: a key of ``SPEED_PRESETS`` (mild scale around real cruise).
-    :returns: (lat, lon) points spaced at real cruise speed, ending exactly on
-        the final waypoint. Empty input -> empty list.
+    :param ease: cosine takeoff / landing speed ramps (no turn spline — path is
+        already a smooth great-circle).
+    :returns: (lat, lon) points at real cruise with eased ends, finishing exactly
+        on the final waypoint. Empty input -> empty list.
     """
     rng = rng or random
     if not waypoints:
@@ -86,6 +108,20 @@ def resample_flight(waypoints, speed=DEFAULT_SPEED, *, tick_seconds=TICK_SECONDS
     points = _clean([(w[1], w[0]) for w in waypoints])
     if len(points) == 1:
         return [points[0]]
+    if len(points) < 2:
+        return []
 
-    step = (effective_speed_kmh(speed) / 3.6) * tick_seconds  # metres per tick
-    return walk_path(points, step, gc_interpolate, jitter_m=jitter_m, rng=rng)
+    cruise = effective_speed_kmh(speed)
+    # No turn zones on a great-circle; only start/end ease.
+    return walk_path_eased(
+        points,
+        cruise,
+        tick_seconds,
+        gc_interpolate,
+        jitter_m=jitter_m,
+        rng=rng,
+        ease=ease,
+        turn_zones=(),
+        accel_seconds=TAKEOFF_SECONDS,
+        decel_seconds=LANDING_SECONDS,
+    )

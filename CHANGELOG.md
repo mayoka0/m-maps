@@ -3,13 +3,19 @@
 All notable changes to M Maps are listed here. Version numbers match GitHub release tags.
 Unreleased develop builds use `X.Y.Z-beta.N` (not tagged as public releases).
 
-## [Unreleased] — 1.0.4-beta.1 (develop only)
+## [Unreleased] — 1.0.4-beta.2 (develop only)
 
-### Realistic motion
+### Natural motion (coordinate sequence)
 
-- Road speeds recalibrated to real-world averages: walk 5, bicycle 16, motorcycle 55, car **60** km/h (was car 90). Duration = path distance ÷ speed — no artificial speedup.
-- Flight uses real commercial cruise (~**875** km/h) with mild slow/normal/fast (±15%). Removed the old 60–240× time-compression so long-haul hops take real hours (e.g. Nairobi→NYC ~13–15 h).
-- Drive tick 0.25 s + lower lateral jitter for fluid Find My motion at the slower pace; fly tick 0.5 s.
+- **Catmull–Rom** smoothing on road routes (after light RDP) so turns are curves, not hard polygon corners. Drive + multi-stop legs.
+- **Cosine velocity easing**: ramp up from rest at start, ease down into the destination, and dip through sharp turns. Fly gets takeoff/landing ramps only (great-circle path is already smooth).
+- Protocol still only sets lat/lon — naturalness comes entirely from the point stream and timing.
+
+### Realistic speeds (from beta.1)
+
+- Road speeds: walk 5, bicycle 16, motorcycle 55, car **60** km/h. Duration ≈ path distance ÷ speed.
+- Flight cruise ~**875** km/h (mild slow/normal/fast ±15%); no 60–240× compression.
+- Drive tick 0.25 s + small spatial jitter; fly tick 0.5 s, no jitter.
 
 ### Beta channel
 

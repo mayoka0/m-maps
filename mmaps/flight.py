@@ -88,6 +88,7 @@ def resample_flight(
     jitter_m=JITTER_METERS,
     rng=None,
     ease: bool = True,
+    duration_seconds=None,
 ):
     """Resample a great-circle flight into one (lat, lon) point per tick.
 
@@ -97,10 +98,14 @@ def resample_flight(
         supported and joined as sequential great-circle segments.
     :param speed: a key of ``SPEED_PRESETS`` (mild scale around real cruise).
     :param ease: cosine takeoff / landing speed ramps (no turn spline — path is
-        already a smooth great-circle).
+        already a smooth great-circle). Ignored when ``duration_seconds`` is set.
+    :param duration_seconds: if set, pace the same great-circle so the flight
+        finishes in about this many seconds (destination fixed).
     :returns: (lat, lon) points at real cruise with eased ends, finishing exactly
         on the final waypoint. Empty input -> empty list.
     """
+    from mmaps.route import path_length_m, walk_path
+
     rng = rng or random
     if not waypoints:
         return []
@@ -110,6 +115,13 @@ def resample_flight(
         return [points[0]]
     if len(points) < 2:
         return []
+
+    # Custom wall-clock duration: same path, constant step → exact ETA.
+    if duration_seconds is not None and float(duration_seconds) > 0:
+        total = path_length_m(points)
+        n = max(1, int(round(float(duration_seconds) / max(tick_seconds, 1e-6))))
+        step = total / n if n > 0 else total
+        return walk_path(points, step, gc_interpolate, jitter_m=jitter_m, rng=rng)
 
     cruise = effective_speed_kmh(speed)
     # No turn zones on a great-circle; only start/end ease.

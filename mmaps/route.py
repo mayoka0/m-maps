@@ -441,6 +441,34 @@ def walk_path(
     return out
 
 
+def _prepare_road_path(coordinates, *, smooth: bool = True) -> List[Point]:
+    """GeoJSON ``[[lon,lat],...]`` → cleaned (and optionally spline-smoothed) path."""
+    points = _clean([(c[1], c[0]) for c in coordinates])
+    if len(points) < 2:
+        return points
+    if not smooth:
+        return points
+    control = rdp_thin(points, RDP_EPSILON_M)
+    if len(control) >= 3:
+        return catmull_rom_smooth(control, SPLINE_SAMPLE_M)
+    return control
+
+
+def path_length_m(points: Sequence[Point]) -> float:
+    """Total great-circle length of a (lat, lon) polyline in metres."""
+    pts = _clean(list(points))
+    if len(pts) < 2:
+        return 0.0
+    return sum(haversine_m(pts[i], pts[i + 1]) for i in range(len(pts) - 1))
+
+
+def estimate_eta_seconds(path_length_meters: float, speed_kmh: float) -> float:
+    """Wall-clock seconds at constant cruise (no ease overhead)."""
+    if speed_kmh <= 0 or path_length_meters <= 0:
+        return 0.0
+    return (path_length_meters / 1000.0) / speed_kmh * 3600.0
+
+
 def resample_by_speed(
     coordinates,
     speed_kmh,
@@ -450,15 +478,20 @@ def resample_by_speed(
     rng=None,
     smooth: bool = True,
     ease: bool = True,
+    duration_seconds: Optional[float] = None,
 ):
     """Resample a route polyline into one (lat, lon) point per ``tick_seconds``.
 
     :param coordinates: the route geometry as ``[[lon, lat], ...]`` — GeoJSON
         order, exactly what OSRM returns. (We convert to (lat, lon) internally
         and return (lat, lon), which is what ``set_target`` expects.)
-    :param speed_kmh: cruise travel speed; actual spacing eases around this.
+    :param speed_kmh: cruise travel speed; actual spacing eases around this
+        unless ``duration_seconds`` overrides the whole trip length.
     :param smooth: if True, RDP-thin then Catmull–Rom so turns are curved.
-    :param ease: if True, cosine ramp at start/end and slow through sharp turns.
+    :param ease: if True, cosine ramp at start/end and slow through sharp turns
+        (ignored when ``duration_seconds`` is set — custom duration is exact).
+    :param duration_seconds: if set, pace the **same path** so it finishes in
+        about this many seconds (destination fixed; speed is derived).
     :returns: a list of (lat, lon) points ending exactly on the destination.
         Empty input -> empty list.
     """
@@ -466,18 +499,24 @@ def resample_by_speed(
     if not coordinates:
         return []
 
-    points = _clean([(c[1], c[0]) for c in coordinates])
-    if len(points) == 1:
-        return [points[0]]
-    if len(points) < 2:
+    path = _prepare_road_path(coordinates, smooth=smooth)
+    if len(path) == 1:
+        return [path[0]]
+    if len(path) < 2:
         return []
 
+    # Custom wall-clock duration: same geometry, constant step so ETA matches.
+    if duration_seconds is not None and float(duration_seconds) > 0:
+        total = path_length_m(path)
+        n = max(1, int(round(float(duration_seconds) / max(tick_seconds, 1e-6))))
+        step = total / n if n > 0 else total
+        return walk_path(path, step, _interpolate, jitter_m=jitter_m, rng=rng)
+
     cruise_m_s = speed_kmh / 3.6
-    control = rdp_thin(points, RDP_EPSILON_M) if smooth else points
+    control = rdp_thin(
+        _clean([(c[1], c[0]) for c in coordinates]), RDP_EPSILON_M
+    ) if smooth else path
     zones = detect_turn_zones(control, cruise_m_s) if ease else []
-    path = catmull_rom_smooth(control, SPLINE_SAMPLE_M) if smooth and len(control) >= 3 else control
-    if len(path) < 2:
-        return [points[-1]]
 
     return walk_path_eased(
         path,

@@ -168,3 +168,21 @@ def test_drive_with_smooth_and_ease_ends_at_dest():
     assert abs(pts[-1][0] - 48.02) < 1e-5
     assert abs(pts[-1][1] - 2.04) < 1e-5
     assert len(pts) > 10
+
+
+def test_duration_override_paces_same_path():
+    # Same geometry; forced 120 s should yield ~120/tick points.
+    coords = [[2.0, 48.0], [2.3, 48.0]]
+    target = 120.0
+    pts = resample_by_speed(
+        coords,
+        MODE_SPEEDS_KMH["car"],
+        jitter_m=0,
+        rng=random.Random(0),
+        duration_seconds=target,
+        smooth=False,
+        ease=False,
+    )
+    eta = len(pts) * TICK_SECONDS
+    assert abs(eta - target) < target * 0.12
+    assert abs(pts[-1][1] - 2.3) < 1e-5

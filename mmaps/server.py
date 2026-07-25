@@ -80,12 +80,17 @@ class DriveRequest(BaseModel):
     # Speed preset key (field still named ``mode`` for API stability):
     # walk | bicycle | motorcycle | car | fly — see route.MODE_SPEEDS_KMH.
     mode: str
+    # Optional wall-clock override (seconds). Same path; only pacing changes.
+    # None / omit → realistic speed from mode. Min 1 s, max 48 h.
+    duration_seconds: Optional[float] = None
 
 
 class FlyRequest(BaseModel):
     # Flight path as [[lon, lat], ...]: [current, destination] for click-and-fly.
     waypoints: List[List[float]]
     speed: str = flight.DEFAULT_SPEED  # one of flight.SPEED_PRESETS
+    # Optional wall-clock override (seconds). Same great-circle; only pacing.
+    duration_seconds: Optional[float] = None
 
 
 class TripLeg(BaseModel):
@@ -605,6 +610,27 @@ async def nearest_airport(
     }
 
 
+def _optional_duration_seconds(value: Optional[float]) -> Optional[float]:
+    """Validate optional duration override; None means use realistic speed."""
+    if value is None:
+        return None
+    try:
+        sec = float(value)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail="duration_seconds must be a number.") from exc
+    if sec <= 0:
+        return None  # treat 0 / negative as "use default"
+    # Cap absurd values (48 h) so a typo can't allocate millions of points.
+    if sec > 48 * 3600:
+        raise HTTPException(
+            status_code=400,
+            detail="duration_seconds max is 48 hours (172800).",
+        )
+    if sec < 1.0:
+        sec = 1.0
+    return sec
+
+
 @app.post("/drive")
 async def drive(request: DriveRequest) -> dict:
     if request.mode == "fly":
@@ -618,7 +644,10 @@ async def drive(request: DriveRequest) -> dict:
         raise HTTPException(status_code=400, detail="A route needs at least two points.")
     session = _require_session(app)
     speed_kmh = route.MODE_SPEEDS_KMH[request.mode]
-    points = route.resample_by_speed(request.coordinates, speed_kmh)
+    duration = _optional_duration_seconds(request.duration_seconds)
+    points = route.resample_by_speed(
+        request.coordinates, speed_kmh, duration_seconds=duration
+    )
     await session.start_movement(points, route.TICK_SECONDS, "drive")
     # applied = real DVT success, not merely "task exists".
     applied = await session.wait_for_applied(timeout=4.0)
@@ -628,6 +657,7 @@ async def drive(request: DriveRequest) -> dict:
         "mode": request.mode,
         "points": len(points),
         "eta_seconds": round(len(points) * route.TICK_SECONDS),
+        "duration_override": duration is not None,
     }
 
 
@@ -641,7 +671,10 @@ async def fly(request: FlyRequest) -> dict:
     session = _require_session(app)
     # Snap destination to nearest airport (idempotent if UI already did).
     waypoints = _snap_fly_waypoints(request.waypoints)
-    points = flight.resample_flight(waypoints, request.speed)
+    duration = _optional_duration_seconds(request.duration_seconds)
+    points = flight.resample_flight(
+        waypoints, request.speed, duration_seconds=duration
+    )
     await session.start_movement(points, flight.TICK_SECONDS, "fly")
     # applied = real DVT success, not merely "task exists".
     applied = await session.wait_for_applied(timeout=4.0)
@@ -651,6 +684,7 @@ async def fly(request: FlyRequest) -> dict:
         "speed": request.speed,
         "points": len(points),
         "eta_seconds": round(len(points) * flight.TICK_SECONDS),
+        "duration_override": duration is not None,
     }
 
 

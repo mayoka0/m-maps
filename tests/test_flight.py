@@ -72,6 +72,20 @@ def test_flight_takeoff_steps_smaller_than_cruise():
     assert start_step < mid_step * 0.9
 
 
+def test_flight_duration_override():
+    # Force a multi-hour hop into exactly 1 hour wall-clock.
+    a = (48.0, 2.0)
+    b = (40.7, -74.0)  # NYC-ish
+    wps = [[a[1], a[0]], [b[1], b[0]]]
+    target = 3600.0
+    pts = resample_flight(
+        wps, speed="normal", jitter_m=0, rng=random.Random(0), duration_seconds=target
+    )
+    eta = len(pts) * TICK_SECONDS
+    assert abs(eta - target) < target * 0.12
+    assert abs(pts[-1][0] - b[0]) < 1e-3
+
+
 def test_version_beta_helper():
     from mmaps import __version__, is_beta_version
 

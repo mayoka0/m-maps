@@ -160,7 +160,40 @@
       background: rgba(240, 180, 41, 0.12);
     }
     #versionChip.beta b { color: #fff3c4; }
+    /* IP-based city/region guess — never presented as precise GPS. */
+    #approxChip {
+      border-color: rgba(148, 163, 184, 0.45);
+      color: #cbd5e1;
+      max-width: 280px;
+    }
+    #approxChip b { color: #e2e8f0; font-weight: 600; }
+    #approxChip .approxNote { font-size: 10.5px; opacity: 0.85; }
     .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); flex-shrink: 0; }
+    #searchResults .eta {
+      color: #a5b4fc; font-size: 11.5px; margin-top: 3px; font-weight: 500;
+    }
+    .durationRow {
+      display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+      margin: 10px 0 4px; padding-top: 8px;
+      border-top: 1px solid var(--glass-border);
+      font-size: 12.5px; color: var(--muted);
+    }
+    .durationRow label { font-weight: 600; color: var(--text); white-space: nowrap; }
+    .durationRow input {
+      flex: 1 1 120px; min-width: 100px; max-width: 180px;
+      font: inherit; font-size: 13px; font-weight: 600; color: var(--text);
+      background: rgba(0,0,0,0.25);
+      border: 1px solid var(--glass-border);
+      border-radius: var(--radius-sm);
+      padding: 6px 10px;
+    }
+    .durationRow input:focus {
+      outline: none; border-color: rgba(109, 124, 255, 0.55);
+    }
+    .durationRow .durationHint { flex: 1 1 100%; font-size: 11.5px; line-height: 1.35; }
+    .durationRow button.ghost {
+      font-size: 11.5px; padding: 5px 8px;
+    }
     .dot.ok { background: var(--ok); box-shadow: 0 0 0 2px rgba(61,214,140,0.25); }
     .dot.warn { background: var(--warn); }
     .dot.err { background: var(--danger); }
@@ -505,6 +538,10 @@
       <span class="chip">State <b id="state">—</b></span>
       <span class="chip" id="spoofChip">Spoof <b id="spoofState">not spoofing</b></span>
       <span class="chip" id="coordsChip" style="display:none">Location <b id="coords"></b></span>
+      <span class="chip" id="approxChip" style="display:none" title="City/region from your Mac’s public IP — not GPS, not precise">
+        Approximate <b id="approxLabel">—</b>
+        <span class="approxNote">· IP rough</span>
+      </span>
       <span class="chip" id="versionChip" title="Running app version">v<b id="appVersion">—</b></span>
     </div>
     <div class="spacer"></div>
@@ -601,6 +638,14 @@
     <!-- Map-click route confirm (destination already chosen on the map) -->
     <div id="goPanel" class="floatCenter">
       <div class="title" id="goTitle"></div>
+      <div class="durationRow" id="durationRow" style="display:none">
+        <label for="durationInput">Duration</label>
+        <input id="durationInput" type="text" inputmode="text" autocomplete="off"
+               placeholder="e.g. 45m · 1h 30m · 2:00" spellcheck="false"
+               title="Override how long this trip takes. Path stays the same; only pace changes." />
+        <button type="button" class="ghost" id="durationResetBtn" title="Restore realistic default duration">Realistic</button>
+        <div class="durationHint" id="durationHint">Realistic default based on distance ÷ speed.</div>
+      </div>
       <div class="actions">
         <button id="goBtn" class="primary" type="button">Go</button>
         <button id="goTeleportBtn" type="button">Teleport instead</button>
@@ -617,11 +662,20 @@
     const $ = (id) => document.getElementById(id);
 
     // Road speeds → POST /drive. Fly is special: great-circle via POST /fly to nearest airport.
+    // Cruise km/h must match mmaps/route.py MODE_SPEEDS_KMH and flight.PLANE_SPEED_KMH.
     const SPEED_LABELS = {
       walk: 'Walk', bicycle: 'Bicycle', motorcycle: 'Motorcycle', car: 'Car', fly: 'Fly'
     };
     const ROAD_SPEEDS = { walk: true, bicycle: true, motorcycle: true, car: true };
+    const CRUISE_KMH = { walk: 5, bicycle: 16, motorcycle: 55, car: 60, fly: 875 };
     const isFlySpeed = () => routeSpeed === 'fly';
+
+    // IP-based rough start (city/region). Never treated as precise GPS.
+    // Used as Route/Fly origin only when the phone has no spoof target yet.
+    let approxOrigin = null; // { lat, lon, city, region, country, label, source }
+    let approxMarker = null;
+    let durationDefaultSec = null; // realistic ETA for open Go panel
+    let durationUserEdited = false;
 
     // ---- Map: OpenFreeMap vector styles (free, no API key) --------------
     // Style JSON URLs from https://openfreemap.org/quick_start/ (+ dark/fiord).
@@ -794,6 +848,238 @@
     }
     function clearDestMarker() { if (destMarker) { destMarker.remove(); destMarker = null; } }
 
+    function showApproxMarker(lat, lon) {
+      if (approxMarker) {
+        approxMarker.setLngLat([lon, lat]);
+        return;
+      }
+      // Muted gray pin — distinct from blue spoof / amber destination.
+      approxMarker = new maplibregl.Marker({ color: '#94a3b8' })
+        .setLngLat([lon, lat])
+        .addTo(map);
+    }
+    function clearApproxMarker() {
+      if (approxMarker) { approxMarker.remove(); approxMarker = null; }
+    }
+
+    /** Spoof target if set, else IP rough start — for route planning only. */
+    function effectiveOrigin() {
+      if (currentTarget) return currentTarget;
+      if (approxOrigin) return { lat: approxOrigin.lat, lon: approxOrigin.lon };
+      return null;
+    }
+
+    function haversineKm(a, b) {
+      const R = 6371.0;
+      const p1 = a.lat * Math.PI / 180, p2 = b.lat * Math.PI / 180;
+      const dphi = (b.lat - a.lat) * Math.PI / 180;
+      const dl = (b.lon - a.lon) * Math.PI / 180;
+      const h = Math.sin(dphi / 2) ** 2 + Math.cos(p1) * Math.cos(p2) * Math.sin(dl / 2) ** 2;
+      return 2 * R * Math.asin(Math.min(1, Math.sqrt(h)));
+    }
+
+    function formatDuration(sec) {
+      if (sec == null || !isFinite(sec) || sec < 0) return '—';
+      const s = Math.round(sec);
+      if (s < 60) return s + 's';
+      const m = Math.round(s / 60);
+      if (m < 60) return m + ' min';
+      const h = Math.floor(m / 60);
+      const rm = m % 60;
+      if (rm === 0) return h + 'h';
+      return h + 'h ' + rm + 'm';
+    }
+
+    /** Parse "45m", "1h30m", "1:30", "90", "1.5h", "3600s" → seconds or null. */
+    function parseDurationToSeconds(text) {
+      if (text == null) return null;
+      const raw = String(text).trim().toLowerCase();
+      if (!raw) return null;
+      // Pure number → minutes if small-ish, else seconds if huge (ambiguous → minutes).
+      if (/^\d+(\.\d+)?$/.test(raw)) {
+        const n = parseFloat(raw);
+        if (!isFinite(n) || n <= 0) return null;
+        // Values >= 300 with no unit: treat as minutes if < 1000 else seconds
+        // (users typing "45" mean 45 min; "3600" could be seconds — prefer minutes under 24h*60).
+        if (n >= 1000) return n; // seconds
+        return n * 60; // minutes
+      }
+      // h:mm or h:mm:ss
+      const colon = raw.match(/^(\d+)\s*:\s*(\d{1,2})(?:\s*:\s*(\d{1,2}))?$/);
+      if (colon) {
+        const h = parseInt(colon[1], 10);
+        const m = parseInt(colon[2], 10);
+        const s = colon[3] != null ? parseInt(colon[3], 10) : 0;
+        if (m >= 60 || s >= 60) return null;
+        return h * 3600 + m * 60 + s;
+      }
+      let total = 0;
+      let matched = false;
+      const re = /(\d+(?:\.\d+)?)\s*(h|hr|hrs|hour|hours|m|min|mins|minute|minutes|s|sec|secs|second|seconds)\b/g;
+      let m;
+      while ((m = re.exec(raw)) !== null) {
+        matched = true;
+        const n = parseFloat(m[1]);
+        const u = m[2];
+        if (u.startsWith('h')) total += n * 3600;
+        else if (u.startsWith('m')) total += n * 60;
+        else total += n;
+      }
+      if (!matched || total <= 0 || !isFinite(total)) return null;
+      return total;
+    }
+
+    /**
+     * Estimate distance + ETA from origin for search/UI (not OSRM).
+     * Road: crow-flies × 1.2 as a rough road-length guess; Fly: great-circle.
+     */
+    function estimateTravelSummary(from, to, speedKey) {
+      if (!from || !to) return null;
+      const straightKm = haversineKm(from, to);
+      const fly = speedKey === 'fly';
+      const pathKm = fly ? straightKm : straightKm * 1.2;
+      const cruise = CRUISE_KMH[speedKey] || CRUISE_KMH.car;
+      const etaSec = (pathKm / cruise) * 3600;
+      return {
+        straightKm,
+        pathKm,
+        etaSec,
+        fly,
+        speedKey,
+        label: fly
+          ? `≈ ${formatDistKm(straightKm)} · ~${formatDuration(etaSec)} fly`
+          : `≈ ${formatDistKm(straightKm)} · ~${formatDuration(etaSec)} ${SPEED_LABELS[speedKey] || speedKey}`
+      };
+    }
+
+    function formatDistKm(km) {
+      if (km < 1) return Math.round(km * 1000) + ' m';
+      if (km < 10) return km.toFixed(1) + ' km';
+      if (km < 1000) return Math.round(km) + ' km';
+      return (km / 1000).toFixed(1) + 'k km';
+    }
+
+    function realisticEtaSeconds(distanceM, speedKey) {
+      if (distanceM == null || distanceM <= 0) return null;
+      const cruise = CRUISE_KMH[speedKey] || CRUISE_KMH.car;
+      return (distanceM / 1000) / cruise * 3600;
+    }
+
+    function setDurationDefault(sec) {
+      durationDefaultSec = (sec != null && isFinite(sec) && sec > 0) ? sec : null;
+      durationUserEdited = false;
+      const row = $('durationRow');
+      const input = $('durationInput');
+      const hint = $('durationHint');
+      if (!row || !input) return;
+      if (durationDefaultSec == null) {
+        row.style.display = 'none';
+        input.value = '';
+        return;
+      }
+      row.style.display = 'flex';
+      input.value = formatDuration(durationDefaultSec);
+      if (hint) {
+        hint.textContent = 'Realistic default ~' + formatDuration(durationDefaultSec)
+          + ' (distance ÷ speed). Edit to force a custom length — path stays the same.';
+      }
+    }
+
+    function readDurationOverrideSeconds() {
+      const input = $('durationInput');
+      if (!input || $('durationRow').style.display === 'none') return null;
+      const parsed = parseDurationToSeconds(input.value);
+      if (parsed == null) return null;
+      // If user left the realistic default text unchanged, send null (server uses cruise).
+      if (!durationUserEdited && durationDefaultSec != null) {
+        const sameish = Math.abs(parsed - durationDefaultSec) < Math.max(2, durationDefaultSec * 0.02);
+        if (sameish) return null;
+      }
+      return parsed;
+    }
+
+    // ---- IP approximate location (browser; free keyless geojs / ipwho.is) --
+    async function fetchApproxLocation() {
+      // Prefer geojs.io: free, no API key, HTTPS, CORS *, city + lat/lon.
+      // Fallback ipwho.is (same properties). Fail soft — no start default.
+      const controllers = [];
+      const withTimeout = (ms) => {
+        const c = typeof AbortController !== 'undefined' ? new AbortController() : null;
+        if (c) {
+          controllers.push(c);
+          setTimeout(() => { try { c.abort(); } catch (e) {} }, ms);
+        }
+        return c ? { signal: c.signal } : {};
+      };
+      try {
+        const res = await fetch('https://get.geojs.io/v1/ip/geo.json', withTimeout(8000));
+        if (res.ok) {
+          const d = await res.json();
+          const lat = parseFloat(d.latitude);
+          const lon = parseFloat(d.longitude);
+          if (isFinite(lat) && isFinite(lon)) {
+            const city = (d.city || '').trim();
+            const region = (d.region || '').trim();
+            const country = (d.country || d.country_code || '').trim();
+            const label = [city, region, country].filter(Boolean).join(', ') || 'Unknown area';
+            return { lat, lon, city, region, country, label, source: 'geojs.io' };
+          }
+        }
+      } catch (e) { /* try fallback */ }
+      try {
+        const res = await fetch('https://ipwho.is/', withTimeout(8000));
+        if (res.ok) {
+          const d = await res.json();
+          if (d && d.success !== false) {
+            const lat = parseFloat(d.latitude);
+            const lon = parseFloat(d.longitude);
+            if (isFinite(lat) && isFinite(lon)) {
+              const city = (d.city || '').trim();
+              const region = (d.region || '').trim();
+              const country = (d.country || d.country_code || '').trim();
+              const label = [city, region, country].filter(Boolean).join(', ') || 'Unknown area';
+              return { lat, lon, city, region, country, label, source: 'ipwho.is' };
+            }
+          }
+        }
+      } catch (e) { /* ignore */ }
+      return null;
+    }
+
+    function applyApproxOrigin(info) {
+      if (!info) return;
+      approxOrigin = info;
+      const chip = $('approxChip');
+      const lab = $('approxLabel');
+      if (lab) lab.textContent = info.city || info.label || 'rough area';
+      if (chip) {
+        chip.style.display = currentTarget ? 'none' : '';
+        chip.title = 'Approximate location from public IP (' + (info.source || 'IP')
+          + ') — city/region only, not precise GPS. Used as Route start until you set a real point. '
+          + info.label;
+      }
+      // Only show gray pin when phone has no spoof target yet.
+      if (!currentTarget) {
+        showApproxMarker(info.lat, info.lon);
+        try {
+          map.flyTo({ center: [info.lon, info.lat], zoom: Math.max(map.getZoom(), 9), essential: true });
+        } catch (e) { /* map may still be loading */ }
+      }
+      updateHint();
+    }
+
+    function refreshApproxChipVisibility() {
+      const chip = $('approxChip');
+      if (!chip) return;
+      if (approxOrigin && !currentTarget) {
+        chip.style.display = '';
+        showApproxMarker(approxOrigin.lat, approxOrigin.lon);
+      } else {
+        chip.style.display = 'none';
+        clearApproxMarker();
+      }
+    }
+
     // ---- Backend helpers ------------------------------------------------
     async function postJSON(url, body) {
       const res = await fetch(url, {
@@ -959,13 +1245,14 @@
       }
       // Paint selection immediately — before any async route rebuild.
       applyModeUI();
-      // If a destination confirm is open, rebuild path when switching Fly ↔ road.
-      if (pendingRoute && currentTarget && movementMode === 'route') {
+      // If a destination confirm is open, rebuild path when switching Fly ↔ road
+      // (or when speed changes so ETA/duration default stays honest).
+      if (pendingRoute && effectiveOrigin() && movementMode === 'route') {
         const od = pendingRoute.originalDest || pendingRoute.dest;
         const label = pendingRoute.originalLabel || pendingRoute.label || null;
         const wasFly = prev === 'fly';
         const nowFly = routeSpeed === 'fly';
-        if (wasFly !== nowFly && od) {
+        if (od && (wasFly !== nowFly || !nowFly)) {
           proposeTravel(od.lat, od.lon, label);
         }
       }
@@ -1015,15 +1302,6 @@
     }
 
     // ---- Multi-stop -----------------------------------------------------
-    function haversineKm(a, b) {
-      const R = 6371;
-      const toR = (d) => d * Math.PI / 180;
-      const dLat = toR(b.lat - a.lat), dLon = toR(b.lon - a.lon);
-      const lat1 = toR(a.lat), lat2 = toR(b.lat);
-      const h = Math.sin(dLat / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLon / 2) ** 2;
-      return 2 * R * Math.asin(Math.sqrt(h));
-    }
-
     // Mirror of mmaps/trip.choose_leg_kind — only fly or drive.
     function chooseLegKind(from, to, road) {
       const straightKm = haversineKm(from, to);
@@ -1076,16 +1354,20 @@
         }).join('');
         box.innerHTML = `<ol>${items}</ol>`;
       }
-      $('tripStartBtn').disabled = !canEdit || tripStops.length < 1 || !currentTarget;
+      const hasStart = !!(currentTarget || approxOrigin);
+      $('tripStartBtn').disabled = !canEdit || tripStops.length < 1 || !hasStart;
       $('tripUndoBtn').disabled = !canEdit || tripStops.length < 1;
       $('tripClearBtn').disabled = !canEdit || tripStops.length < 1;
     }
 
     function addTripStop(lat, lon, label) {
       if (moving) return;
-      if (!currentTarget) {
+      if (!currentTarget && !approxOrigin) {
         // Need a start first — place the phone, then add stops.
         return teleport(lat, lon);
+      }
+      if (!currentTarget && approxOrigin) {
+        // Approx IP start is enough to plan stops; first leg starts from that area.
       }
       tripStops.push({
         lat, lon,
@@ -1100,11 +1382,12 @@
     }
 
     async function planTripLegs() {
-      if (!currentTarget || !tripStops.length) return null;
+      const origin = effectiveOrigin();
+      if (!origin || !tripStops.length) return null;
       const legs = [];
       const kinds = [];
       const landings = []; // airport (or fallback) per stop for markers
-      let from = { lat: currentTarget.lat, lon: currentTarget.lon };
+      let from = { lat: origin.lat, lon: origin.lon };
       const pathCoords = []; // for a light preview line
 
       for (let i = 0; i < tripStops.length; i++) {
@@ -1150,8 +1433,8 @@
         showBanner('A trip or route is already in progress — use Stop here first.', 'warn');
         return;
       }
-      if (!currentTarget) {
-        showBanner('Set a starting location first (click the map or teleport).', 'warn');
+      if (!effectiveOrigin()) {
+        showBanner('Set a starting location first (click the map or wait for approx IP location).', 'warn');
         return;
       }
       if (!tripStops.length) {
@@ -1227,8 +1510,17 @@
       if (!foundPlace) return;
       const where = escapeHtml(displayLabel(foundPlace.label, foundPlace.lat, foundPlace.lon));
       const speed = SPEED_LABELS[routeSpeed] || routeSpeed;
+      const origin = effectiveOrigin();
+      let etaLine = '';
+      if (origin) {
+        const sk = isFlySpeed() ? 'fly' : (ROAD_SPEEDS[routeSpeed] ? routeSpeed : 'car');
+        const est = estimateTravelSummary(origin, foundPlace, sk);
+        if (est) etaLine = `<br><span style="color:#a5b4fc;font-size:12px">${escapeHtml(est.label)}</span>`;
+      }
       let action;
-      if (!currentTarget) {
+      if (!currentTarget && movementMode === 'route' && approxOrigin) {
+        action = `Route from approx start (${escapeHtml(approxOrigin.city || 'IP rough')})`;
+      } else if (!currentTarget) {
         action = 'Place phone here (first location)';
       } else if (movementMode === 'teleport') {
         action = 'Teleport mode — jump here';
@@ -1239,10 +1531,15 @@
       } else {
         action = `Route · ${escapeHtml(speed)} — travel by road`;
       }
-      $('findTitle').innerHTML = `Found <b>${where}</b><br><span style="color:var(--muted);font-size:12px">${action}. Phone has not moved yet.</span>`;
-      if (!currentTarget) $('moveHereBtn').textContent = 'Place here';
-      else if (movementMode === 'multistop') $('moveHereBtn').textContent = 'Add stop';
-      else $('moveHereBtn').textContent = 'Move here';
+      $('findTitle').innerHTML =
+        `Found <b>${where}</b><br><span style="color:var(--muted);font-size:12px">${action}. Phone has not moved yet.</span>${etaLine}`;
+      if (!currentTarget && !(movementMode === 'route' && approxOrigin) && !(movementMode === 'multistop' && approxOrigin)) {
+        $('moveHereBtn').textContent = 'Place here';
+      } else if (movementMode === 'multistop') {
+        $('moveHereBtn').textContent = 'Add stop';
+      } else {
+        $('moveHereBtn').textContent = 'Move here';
+      }
     }
 
     function showFoundPlace(lat, lon, label) {
@@ -1264,6 +1561,7 @@
         const land = pendingRoute.landing || {};
         const apLabel = escapeHtml(land.label || coordsLabel(pendingRoute.dest.lat, pendingRoute.dest.lon));
         const orig = pendingRoute.originalLabel ? shortName(pendingRoute.originalLabel) : null;
+        const eta = pendingRoute.etaSeconds != null ? formatDuration(pendingRoute.etaSeconds) : null;
         let sub;
         if (land.fallback) {
           sub = 'Straight flight to the point (no airport found nearby).';
@@ -1272,11 +1570,13 @@
         } else {
           sub = 'Nearest airport — straight great-circle flight (not roads).';
         }
+        if (eta) sub += ` · ~${escapeHtml(eta)} at cruise`;
         $('goTitle').innerHTML = `Fly to <b>${apLabel}</b><br><span style="color:var(--muted);font-size:12px">${sub}</span>`;
         $('goBtn').style.display = '';
         $('goBtn').textContent = 'Fly';
         $('goTeleportBtn').style.display = '';
         $('goTeleportBtn').textContent = 'Teleport to airport';
+        setDurationDefault(pendingRoute.etaSeconds);
         return;
       }
 
@@ -1288,17 +1588,21 @@
         $('goTitle').innerHTML = `No road to <b>${escapeHtml(where)}</b>. Teleport instead?`;
         $('goBtn').style.display = 'none';
         $('goTeleportBtn').style.display = '';
+        setDurationDefault(null);
         return;
       }
       const km = pendingRoute.distanceM / 1000;
       const kmText = km < 10 ? km.toFixed(1) : Math.round(km).toString();
       const speed = SPEED_LABELS[routeSpeed] || routeSpeed;
       const where = pendingRoute.label ? shortName(pendingRoute.label) : null;
+      const eta = pendingRoute.etaSeconds != null ? formatDuration(pendingRoute.etaSeconds) : null;
+      const etaBit = eta ? ` · ~${escapeHtml(eta)}` : '';
       $('goTitle').innerHTML = where
-        ? `<b>${escapeHtml(where)}</b> — ${kmText} km by road · speed <b>${escapeHtml(speed)}</b>`
-        : `<b>${kmText} km</b> by road · speed <b>${escapeHtml(speed)}</b>`;
+        ? `<b>${escapeHtml(where)}</b> — ${kmText} km by road · <b>${escapeHtml(speed)}</b>${etaBit}`
+        : `<b>${kmText} km</b> by road · <b>${escapeHtml(speed)}</b>${etaBit}`;
       $('goBtn').style.display = '';
       $('goTeleportBtn').style.display = '';
+      setDurationDefault(pendingRoute.etaSeconds);
     }
 
     // ---- Actions: teleport / route --------------------------------------
@@ -1364,7 +1668,7 @@
       }
     }
 
-    async function startDrive(coordinates, speed) {
+    async function startDrive(coordinates, speed, durationSeconds) {
       if (speed === 'fly') {
         showBanner('Fly uses a straight flight path, not roads. Pick Fly and a destination again.', 'error');
         return false;
@@ -1375,7 +1679,11 @@
       }
       const useSpeed = ROAD_SPEEDS[speed] ? speed : 'car';
       try {
-        const res = await postJSON('/drive', { coordinates, mode: useSpeed });
+        const body = { coordinates, mode: useSpeed };
+        if (durationSeconds != null && durationSeconds > 0) {
+          body.duration_seconds = durationSeconds;
+        }
+        const res = await postJSON('/drive', body);
         activeMoveSpeed = useSpeed;
         if (res.applied === false) {
           showBanner(
@@ -1395,7 +1703,7 @@
       }
     }
 
-    async function startFly(from, toAirport) {
+    async function startFly(from, toAirport, durationSeconds) {
       if (serverFeatures.length && !serverFeatures.includes('fly')) {
         showBanner('The running server can’t do flying. Restart the app / serve process.', 'error');
         return false;
@@ -1406,8 +1714,11 @@
         [toAirport.lon, toAirport.lat]
       ];
       try {
-        // Real cruise speed (no time-compression) — long hauls take real hours.
-        const res = await postJSON('/fly', { waypoints, speed: 'normal' });
+        const body = { waypoints, speed: 'normal' };
+        if (durationSeconds != null && durationSeconds > 0) {
+          body.duration_seconds = durationSeconds;
+        }
+        const res = await postJSON('/fly', body);
         activeMoveSpeed = 'fly';
         if (res.applied === false) {
           showBanner(
@@ -1475,6 +1786,8 @@
       setLine('flight', line, '#2dd4bf');
       // Pin the airport (landing), not the original click if different.
       showDestMarker(landing.lat, landing.lon);
+      const distM = haversineKm(from, landing) * 1000;
+      const etaSeconds = realisticEtaSeconds(distM, 'fly');
       pendingRoute = {
         kind: 'fly',
         dest: { lat: landing.lat, lon: landing.lon },
@@ -1483,7 +1796,10 @@
         originalLabel: originalLabel || null,
         coordinates: line,
         flightFrom: { lat: from.lat, lon: from.lon },
-        noRoute: false
+        noRoute: false,
+        distanceM: distM,
+        etaSeconds,
+        fromApprox: !currentTarget && !!approxOrigin
       };
       hideBanner();
       refreshGoPanelCopy();
@@ -1493,14 +1809,15 @@
 
     // Fly: straight great-circle to nearest airport (never OSRM roads).
     async function proposeFly(destLat, destLon, label) {
-      if (!currentTarget) return teleport(destLat, destLon);
+      const from = effectiveOrigin();
+      if (!from) return teleport(destLat, destLon);
       closeFindPanel({ clearMarker: false });
       pendingRoute = null;
       removeLine('route');
 
       const landing = await resolveLanding(destLat, destLon, label);
       showFlightPreview(
-        currentTarget,
+        from,
         landing,
         { lat: destLat, lon: destLon },
         label
@@ -1512,24 +1829,27 @@
 
     // Map-click road route: OSRM path + Go panel (walk/bike/motorcycle/car only).
     async function proposeRoad(destLat, destLon, label) {
-      if (!currentTarget) return teleport(destLat, destLon);
+      const from = effectiveOrigin();
+      if (!from) return teleport(destLat, destLon);
       const dest = { lat: destLat, lon: destLon };
       closeFindPanel({ clearMarker: false });
       showDestMarker(destLat, destLon);
       pendingRoute = null;
       removeLine('flight');
 
-      const road = await fetchOsrmRoute(currentTarget, dest);
+      const road = await fetchOsrmRoute(from, dest);
       if (!road.route) {
         clearRouteLine();
         showBanner(routeErrorMessage(road.error, label));
-        pendingRoute = { kind: 'road', dest, coordinates: null, distanceM: null, label: label || null, noRoute: true };
+        pendingRoute = { kind: 'road', dest, coordinates: null, distanceM: null, label: label || null, noRoute: true, etaSeconds: null };
         refreshGoPanelCopy();
         $('goPanel').style.display = 'block';
         updateHint();
         return;
       }
 
+      const speedKey = ROAD_SPEEDS[routeSpeed] ? routeSpeed : 'car';
+      const etaSeconds = realisticEtaSeconds(road.route.distance, speedKey);
       setLine('route', road.route.geometry.coordinates, '#3b82f6');
       pendingRoute = {
         kind: 'road',
@@ -1537,7 +1857,9 @@
         coordinates: road.route.geometry.coordinates,
         distanceM: road.route.distance,
         label: label || null,
-        noRoute: false
+        noRoute: false,
+        etaSeconds,
+        fromApprox: !currentTarget && !!approxOrigin
       };
       hideBanner();
       refreshGoPanelCopy();
@@ -1560,10 +1882,15 @@
       if (moving) return;
       hideSearchResults();
       const lat = e.lngLat.lat, lon = e.lngLat.lng;
-      if (!currentTarget || movementMode === 'teleport') {
+      // Teleport always places. Route with only IP-approx origin still plans a path.
+      if (movementMode === 'teleport' || (!currentTarget && !approxOrigin)) {
         await teleport(lat, lon);
       } else if (movementMode === 'multistop') {
         addTripStop(lat, lon, null);
+      } else if (movementMode === 'route' && !currentTarget && approxOrigin) {
+        await proposeTravel(lat, lon, null);
+      } else if (!currentTarget) {
+        await teleport(lat, lon);
       } else {
         await proposeTravel(lat, lon, null);
       }
@@ -1576,10 +1903,14 @@
       const { lat, lon, label } = foundPlace;
       foundPlace = null;
       $('findPanel').style.display = 'none';
-      if (!currentTarget || movementMode === 'teleport') {
+      if (movementMode === 'teleport' || (!currentTarget && !approxOrigin)) {
         await teleport(lat, lon);
       } else if (movementMode === 'multistop') {
         addTripStop(lat, lon, label);
+      } else if (movementMode === 'route' && (currentTarget || approxOrigin)) {
+        await travelAndGo(lat, lon, label);
+      } else if (!currentTarget) {
+        await teleport(lat, lon);
       } else {
         await travelAndGo(lat, lon, label);
       }
@@ -1592,15 +1923,29 @@
       const { lat, lon } = pendingRoute.dest;
       teleport(lat, lon);
     });
+    if ($('durationInput')) {
+      $('durationInput').addEventListener('input', () => { durationUserEdited = true; });
+    }
+    if ($('durationResetBtn')) {
+      $('durationResetBtn').addEventListener('click', () => {
+        if (durationDefaultSec != null) setDurationDefault(durationDefaultSec);
+      });
+    }
     $('goBtn').addEventListener('click', async () => {
       if (!pendingRoute || moving) return;
+      const durationOverride = readDurationOverrideSeconds();
+      if ($('durationInput') && $('durationInput').value.trim() && durationOverride == null && durationUserEdited) {
+        showBanner('Could not parse duration — try 45m, 1h 30m, or 2:00.', 'warn');
+        return;
+      }
       if (pendingRoute.kind === 'fly') {
-        const from = pendingRoute.flightFrom || currentTarget;
+        const from = pendingRoute.flightFrom || effectiveOrigin();
         const landing = pendingRoute.landing || pendingRoute.dest;
         if (!from || !landing) return;
         pendingRoute = null;
         $('goPanel').style.display = 'none';
-        const ok = await startFly(from, landing);
+        setDurationDefault(null);
+        const ok = await startFly(from, landing, durationOverride);
         if (!ok) {
           clearRouteLine();
           clearDestMarker();
@@ -1613,7 +1958,8 @@
       const speed = routeSpeed === 'fly' ? 'car' : routeSpeed;
       pendingRoute = null;
       $('goPanel').style.display = 'none';
-      const ok = await startDrive(coords, speed);
+      setDurationDefault(null);
+      const ok = await startDrive(coords, speed, durationOverride);
       if (!ok) {
         clearRouteLine();
         clearDestMarker();
@@ -1689,6 +2035,8 @@
         return;
       }
       box.innerHTML = '';
+      const origin = effectiveOrigin();
+      const speedKey = isFlySpeed() ? 'fly' : (ROAD_SPEEDS[routeSpeed] ? routeSpeed : 'car');
       unique.forEach((r) => {
         const b = document.createElement('button');
         b.type = 'button';
@@ -1696,7 +2044,16 @@
         const sub = detail
           ? escapeHtml(r.name) + ' · ' + escapeHtml(detail)
           : escapeHtml(r.name) + ' · ' + escapeHtml(r.lat.toFixed(4) + ', ' + r.lon.toFixed(4));
-        b.innerHTML = `<div class="name">${escapeHtml(shortName(r.name))}</div><div class="sub">${sub}</div>`;
+        let etaHtml = '';
+        if (origin) {
+          const est = estimateTravelSummary(origin, { lat: r.lat, lon: r.lon }, speedKey);
+          if (est) {
+            etaHtml = `<div class="eta">${escapeHtml(est.label)}</div>`;
+          }
+        } else {
+          etaHtml = '<div class="eta">Set a start (or wait for approx IP location) for travel time</div>';
+        }
+        b.innerHTML = `<div class="name">${escapeHtml(shortName(r.name))}</div><div class="sub">${sub}</div>${etaHtml}`;
         b.addEventListener('click', () => {
           $('searchInput').value = shortName(r.name);
           pickSearchResult(r.lat, r.lon, r.name);
@@ -1762,7 +2119,17 @@
         hint.style.display = 'none'; return;
       }
       hint.style.display = 'block';
-      if (!currentTarget) {
+      if (!currentTarget && approxOrigin) {
+        const place = approxOrigin.city || approxOrigin.label || 'your area';
+        if (movementMode === 'route') {
+          const sp = SPEED_LABELS[routeSpeed] || routeSpeed;
+          hint.textContent = `Approx start: ${place} (IP rough) · ${sp} — click a destination, or set an exact start on the map.`;
+        } else if (movementMode === 'multistop') {
+          hint.textContent = `Approx start: ${place} (IP rough) — click to add stops, or place an exact start first.`;
+        } else {
+          hint.textContent = `Approx location: ${place} (IP rough, not GPS) — click the map or search to place the phone.`;
+        }
+      } else if (!currentTarget) {
         hint.textContent = 'Not spoofing yet — click the map or search a place to set the first location.';
       } else if (movementMode === 'teleport') {
         hint.textContent = 'Teleport mode — click the map to jump, or search then Move here.';
@@ -1920,11 +2287,12 @@
         $('coords').textContent = s.target.lat.toFixed(5) + ', ' + s.target.lon.toFixed(5);
         $('stopBtn').disabled = false;
       } else {
-        // Neutral launch: no fake "real location" dot — only a spoof after first set.
+        // Neutral launch: no spoof dot — gray IP-approx pin may still show.
         clearDot();
         $('coordsChip').style.display = 'none';
         $('stopBtn').disabled = true;
       }
+      refreshApproxChipVisibility();
       // Keep find-panel copy honest if start location just appeared/disappeared.
       if (foundPlace) refreshFindPanelCopy();
 
@@ -1973,6 +2341,14 @@
     poll();
     setInterval(poll, 1000);
     updateHint();
+
+    // Rough IP city/region start (browser → free keyless APIs). Never spoofs the phone.
+    (async function initApproxLocation() {
+      try {
+        const info = await fetchApproxLocation();
+        if (info) applyApproxOrigin(info);
+      } catch (e) { /* offline / blocked — leave no default start */ }
+    })();
 
     // ---- Optional update check (notify only; never blocks the app) -------
     // Public GitHub Releases API — no token. Fail silently offline.

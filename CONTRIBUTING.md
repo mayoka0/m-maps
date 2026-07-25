@@ -70,9 +70,26 @@ release, merge **`develop` → `main`**.
 - **Stable / public:** `mmaps/__init__.py` → `__version__ = "X.Y.Z"`, tagged on
   `main` as `vX.Y.Z` (GitHub Release).
 - **Develop / local beta:** `__version__ = "X.Y.Z-beta.N"` (e.g. `1.0.4-beta.1`).
-  The app’s version chip turns amber and is labeled as a pre-release. Bump `N`
-  on `develop` as you iterate. **Never** tag beta strings as public GitHub
-  Releases — promote by setting a clean `X.Y.Z` when cutting `main`.
+  The app’s version chip turns amber and is labeled as a pre-release. **Never**
+  tag beta strings as public GitHub Releases — promote by setting a clean
+  `X.Y.Z` when cutting `main`.
+
+### Maintainer workflow (solo / agent-assisted) — nothing auto-ships
+
+For day-to-day work on this machine (including AI coding agents):
+
+1. **Build and test locally.** Do **not** commit or push to **any** branch
+   (including `develop`) without **explicit** maintainer permission **each
+   time**. Finishing a coding task is not permission to ship.
+2. When a change set is ready, **ask** whether it is good to push to `develop`
+   — then wait. Do not push as an automatic “task complete” step.
+3. **Do not bump version numbers (including beta `N`) on every change.** Bump
+   only when the maintainer calls a meaningful checkpoint. Related changes
+   should accumulate and be tested together under one version.
+4. **Public releases** (`main`, tags, GitHub Releases) stay equally strict —
+   only when the maintainer explicitly asks.
+
+Slower, deliberate, maintainer-confirmed steps beat fast automatic pushes.
 
 ### Solo-maintainer review policy (temporary)
 

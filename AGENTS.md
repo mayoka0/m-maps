@@ -17,7 +17,7 @@ evade tracking.
 - Device support today: iPhone on iOS 17+ connected to a Mac by USB.
 - Development machine: Apple Silicon macOS with Xcode Command Line Tools; do not assume Homebrew
   or full Xcode.
-- Current code version: `1.0.4-beta.2` in `mmaps/__init__.py`. Do not bump it automatically.
+- Current release-candidate version: `1.0.4` in `mmaps/__init__.py`. Do not bump it automatically.
 - Default server exposure: `127.0.0.1:8765`. Optional `--lan` binds only to a specific private
   LAN IPv4 address, never `0.0.0.0`.
 - Privacy: M Maps has no telemetry and collects no user data. The Python process talks to the
@@ -178,8 +178,8 @@ phone session is confirmed. Validation and service failures use FastAPI `{ "deta
   "spoofing": true,
   "features": ["teleport", "drive", "fly", "geocode", "airports", "trip", "device_confirm"],
   "lan": false,
-  "version": "1.0.4-beta.2",
-  "beta": true,
+  "version": "1.0.4",
+  "beta": false,
   "github_repo": "mayoka0/m-maps"
 }
 ```

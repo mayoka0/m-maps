@@ -3,7 +3,7 @@
 All notable changes to M Maps are listed here. Version numbers match GitHub release tags.
 Unreleased develop builds use `X.Y.Z-beta.N` (not tagged as public releases).
 
-## [Unreleased] — 1.0.4-beta.2 (develop only)
+## [1.0.4] — 2026-08-07
 
 ### Road fidelity and movement
 
@@ -39,10 +39,6 @@ Unreleased develop builds use `X.Y.Z-beta.N` (not tagged as public releases).
 - Road speeds: walk 5, bicycle 16, motorcycle 55, car **60** km/h. Duration ≈ path distance ÷ speed.
 - Flight cruise ~**875** km/h (mild slow/normal/fast ±15%); no 60–240× compression.
 - Drive tick 0.25 s with no lateral jitter; fly tick 0.5 s, no jitter.
-
-### Beta channel
-
-- Develop builds identify as `1.0.4-beta.N` with an amber version chip (“pre-release / develop build”). Not for public GitHub Releases.
 
 ## [1.0.3] — 2026-07-24
 

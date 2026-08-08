@@ -86,10 +86,10 @@ def test_flight_duration_override():
     assert abs(pts[-1][0] - b[0]) < 1e-3
 
 
-def test_version_beta_helper():
+def test_release_version_and_beta_helper():
     from mmaps import __version__, is_beta_version
 
-    assert "beta" in __version__.lower()
-    assert is_beta_version()
+    assert __version__ == "1.0.4"
+    assert not is_beta_version()
     assert is_beta_version("1.0.4-beta.2")
     assert not is_beta_version("1.0.3")

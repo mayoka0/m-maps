@@ -292,8 +292,16 @@ def _strip_packaging_metadata(app_dir: Path) -> None:
     """Remove pip dist-info / egg-info (install records, not needed at runtime)."""
     for pattern in ("**/*.dist-info", "**/*.egg-info"):
         for path in app_dir.glob(pattern):
-            if path.is_dir():
+            # PyInstaller's macOS bundle contains each metadata directory in
+            # Resources plus a companion symlink in Frameworks. Removing only
+            # the directory leaves a broken symlink, which makes deep codesign
+            # verification fail even though the application can still launch.
+            if path.is_symlink():
+                path.unlink(missing_ok=True)
+            elif path.is_dir():
                 shutil.rmtree(path, ignore_errors=True)
+            elif path.exists():
+                path.unlink()
 
 
 def _assert_no_dev_paths(app_dir: Path) -> None:

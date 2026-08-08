@@ -6,7 +6,7 @@ WEB_DIR = Path(__file__).resolve().parents[1] / "mmaps" / "web"
 
 
 def test_maplibre_disables_repeated_worlds():
-    html = (WEB_DIR / "index.html").read_text()
+    html = (WEB_DIR / "index.html").read_text(encoding="utf-8")
     assert "renderWorldCopies: false" in html
     # A [-180, 180] maxBounds combined with disabled world copies can clamp
     # MapLibre onto the antimeridian and leave a split blank canvas.
@@ -14,7 +14,7 @@ def test_maplibre_disables_repeated_worlds():
 
 
 def test_google_map_is_restricted_to_one_world():
-    source = (WEB_DIR / "js" / "mmaps-map-provider.js").read_text()
+    source = (WEB_DIR / "js" / "mmaps-map-provider.js").read_text(encoding="utf-8")
     assert "strictBounds: true" in source
     assert "west: -180, east: 180" in source
     assert "function minimumWorldZoom" in source
@@ -23,7 +23,7 @@ def test_google_map_is_restricted_to_one_world():
 
 
 def test_teleport_map_click_uses_confirmation_not_direct_spoof():
-    html = (WEB_DIR / "index.html").read_text()
+    html = (WEB_DIR / "index.html").read_text(encoding="utf-8")
     start = html.index("async function handleMapClick")
     end = html.index("function mapFlyTo", start)
     handler = html[start:end]
@@ -32,7 +32,7 @@ def test_teleport_map_click_uses_confirmation_not_direct_spoof():
 
 
 def test_header_stacks_above_controls_for_device_popover():
-    html = (WEB_DIR / "index.html").read_text()
+    html = (WEB_DIR / "index.html").read_text(encoding="utf-8")
     header_start = html.index("header {")
     header_end = html.index("}", header_start)
     controls_start = html.index("#controls {")
@@ -42,7 +42,7 @@ def test_header_stacks_above_controls_for_device_popover():
 
 
 def test_search_is_collapsed_and_explicit_submit_only():
-    html = (WEB_DIR / "index.html").read_text()
+    html = (WEB_DIR / "index.html").read_text(encoding="utf-8")
     assert 'id="searchToggle"' in html
     assert "function setSearchOpen" in html
     assert "scheduleLiveSearch" not in html
@@ -50,7 +50,7 @@ def test_search_is_collapsed_and_explicit_submit_only():
 
 
 def test_controls_live_inside_the_floating_header():
-    html = (WEB_DIR / "index.html").read_text()
+    html = (WEB_DIR / "index.html").read_text(encoding="utf-8")
     header = html[html.index("<header>"):html.index("</header>")]
     assert 'id="controls"' in header
     assert 'id="settingsBtn"' in header
@@ -58,7 +58,7 @@ def test_controls_live_inside_the_floating_header():
 
 
 def test_trip_status_poll_does_not_replace_open_wait_selector():
-    html = (WEB_DIR / "index.html").read_text()
+    html = (WEB_DIR / "index.html").read_text(encoding="utf-8")
     assert "let tripListRenderKey = null" in html
     assert "if (nextRenderKey !== tripListRenderKey)" in html
     assert "tripListRenderKey = makeTripListRenderKey(true)" in html

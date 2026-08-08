@@ -146,7 +146,7 @@ app = BUNDLE(
     name="M Maps.app",
     icon=_ICON,
     bundle_identifier="local.mmaps.app",
-    version="1.0.4",
+    version="1.0.5",
     info_plist={
         "CFBundleDevelopmentRegion": "en",
         "CFBundleDisplayName": "M Maps",
@@ -158,8 +158,8 @@ app = BUNDLE(
         "CFBundleInfoDictionaryVersion": "6.0",
         "CFBundleName": "M Maps",
         "CFBundlePackageType": "APPL",
-        "CFBundleShortVersionString": "1.0.4",
-        "CFBundleVersion": "1.0.4",
+        "CFBundleShortVersionString": "1.0.5",
+        "CFBundleVersion": "1.0.5",
         "LSMinimumSystemVersion": "12.0",
         # CRITICAL: console helper must not force background-only on the GUI app.
         # LSBackgroundOnly=true → Dock skips normal app-icon styling/tint.

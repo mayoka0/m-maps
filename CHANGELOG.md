@@ -3,6 +3,15 @@
 All notable changes to M Maps are listed here. Version numbers match GitHub release tags.
 Unreleased develop builds use `X.Y.Z-beta.N` (not tagged as public releases).
 
+## [1.0.5] — 2026-08-07
+
+### Device confirmation
+
+- Moved iPhone authorization into a blocking foreground dialog so the confirmation controls can
+  never be hidden behind the translucent command bar, map, settings, or warning banners.
+- Added a dimmed backdrop, clear title, accessible dialog semantics, and stable focus that is not
+  repeatedly stolen by one-second status polling.
+
 ## [1.0.4] — 2026-08-07
 
 ### Road fidelity and movement

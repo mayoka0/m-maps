@@ -2,10 +2,16 @@
 
 Pure functions, no I/O — easy to unit-test. The map GUI fetches the actual
 road route from a routing service (OSRM) in the browser; the coordinates land
-here, we **smooth** them (Catmull-Rom through turns), then resample with a
-**variable speed profile** (cosine ease at start/end and through sharp turns)
-into one point per movement tick. The session feeds those points to
-``set_target`` on a timer.
+here and are resampled with a **variable speed profile** (cosine ease at
+start/end and through sharp turns) into one point per movement tick. The
+session feeds those points to ``set_target`` on a timer.
+
+Road accuracy is the first priority: production playback follows OSRM's
+polyline exactly.  Do not spline the route by default.  An unconstrained
+Catmull-Rom curve can leave the source polyline by several metres at sharp or
+uneven junctions, which is enough to put Find My on a nearby wrong road before
+the curve returns.  Natural motion comes from speed easing; OSRM's full
+geometry already describes the road's curves.
 
 The DVT location protocol only accepts lat/lon — all natural-looking motion
 comes from this coordinate sequence and its timing (not speed/heading fields).
@@ -42,8 +48,10 @@ DEFAULT_SPEED_PRESET = "car"
 # At car 60 km/h, 0.25 s → ~4.2 m/step at cruise — fluid in Find My.
 TICK_SECONDS = 0.25
 
-# Lateral noise scaled for the smaller step size (was too large vs ~4 m steps).
-JITTER_METERS = 0.35
+# Road playback should remain on the router's centreline.  Even sub-metre
+# synthetic noise works against that guarantee and can make a dot appear near
+# a kerb when different map datasets are already offset slightly.
+JITTER_METERS = 0.0
 
 # --- Natural motion (coordinate sequence only; protocol has no speed/heading) ---
 
@@ -441,7 +449,7 @@ def walk_path(
     return out
 
 
-def _prepare_road_path(coordinates, *, smooth: bool = True) -> List[Point]:
+def _prepare_road_path(coordinates, *, smooth: bool = False) -> List[Point]:
     """GeoJSON ``[[lon,lat],...]`` → cleaned (and optionally spline-smoothed) path."""
     points = _clean([(c[1], c[0]) for c in coordinates])
     if len(points) < 2:
@@ -476,7 +484,7 @@ def resample_by_speed(
     tick_seconds=TICK_SECONDS,
     jitter_m=JITTER_METERS,
     rng=None,
-    smooth: bool = True,
+    smooth: bool = False,
     ease: bool = True,
     duration_seconds: Optional[float] = None,
 ):
@@ -487,7 +495,9 @@ def resample_by_speed(
         and return (lat, lon), which is what ``set_target`` expects.)
     :param speed_kmh: cruise travel speed; actual spacing eases around this
         unless ``duration_seconds`` overrides the whole trip length.
-    :param smooth: if True, RDP-thin then Catmull–Rom so turns are curved.
+    :param smooth: opt-in legacy visual smoothing. Production callers leave
+        this False so every emitted point remains on the OSRM road polyline.
+        Catmull–Rom is unconstrained and can cut across or overshoot junctions.
     :param ease: if True, cosine ramp at start/end and slow through sharp turns
         (ignored when ``duration_seconds`` is set — custom duration is exact).
     :param duration_seconds: if set, pace the **same path** so it finishes in
@@ -513,9 +523,12 @@ def resample_by_speed(
         return walk_path(path, step, _interpolate, jitter_m=jitter_m, rng=rng)
 
     cruise_m_s = speed_kmh / 3.6
-    control = rdp_thin(
-        _clean([(c[1], c[0]) for c in coordinates]), RDP_EPSILON_M
-    ) if smooth else path
+    # Turn detection may use a lightly simplified copy, but the coordinates
+    # sent to the phone always walk ``path`` itself unless a caller explicitly
+    # opts into the legacy smoother.  This preserves road fidelity while still
+    # slowing naturally for significant heading changes.
+    raw = _clean([(c[1], c[0]) for c in coordinates])
+    control = rdp_thin(raw, RDP_EPSILON_M)
     zones = detect_turn_zones(control, cruise_m_s) if ease else []
 
     return walk_path_eased(

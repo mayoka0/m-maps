@@ -96,7 +96,7 @@ def test_easing_smaller_steps_at_start_than_mid():
     assert start_step < mid_step * 0.85
 
 
-def test_catmull_rom_rounds_sharp_corner():
+def test_catmull_rom_rounds_sharp_corner_only_when_explicitly_requested():
     # L-shaped control path: origin → east → north.
     # Pure polygon corner sits at (0, 0.01) lat/lon delta; spline should cut inside.
     a = (48.0, 2.0)
@@ -139,6 +139,53 @@ def test_catmull_rom_rounds_sharp_corner():
     assert max_inside > 8.0  # metres off the hard L — a real curve cut
 
 
+def test_default_drive_stays_on_osrm_polyline_at_tight_parallel_turn():
+    """Regression: an unconstrained spline sent the phone onto a wrong road.
+
+    This U-turn represents two nearby parallel roads.  Default production
+    resampling must stay on the supplied OSRM segments; otherwise Find My can
+    map-match an off-route sample to the neighboring road and then appear to
+    double back.
+    """
+    lat0 = 42.0
+    metres_per_lat = 111_320.0
+    metres_per_lon = metres_per_lat * math.cos(math.radians(lat0))
+
+    def geo(x_m, y_m):
+        return [x_m / metres_per_lon, lat0 + y_m / metres_per_lat]
+
+    coordinates = [geo(0, 0), geo(100, 0), geo(100, 12), geo(0, 12)]
+    points = resample_by_speed(
+        coordinates,
+        MODE_SPEEDS_KMH["car"],
+        jitter_m=0,
+        rng=random.Random(0),
+    )
+
+    def xy(point):
+        lat, lon = point
+        return lon * metres_per_lon, (lat - lat0) * metres_per_lat
+
+    raw = [(c[1], c[0]) for c in coordinates]
+
+    def distance_to_segment(point, start, end):
+        px, py = xy(point)
+        ax, ay = xy(start)
+        bx, by = xy(end)
+        dx, dy = bx - ax, by - ay
+        length_sq = dx * dx + dy * dy
+        if length_sq == 0:
+            return math.hypot(px - ax, py - ay)
+        fraction = max(0.0, min(1.0, ((px - ax) * dx + (py - ay) * dy) / length_sq))
+        return math.hypot(px - (ax + fraction * dx), py - (ay + fraction * dy))
+
+    max_off_route = max(
+        min(distance_to_segment(point, raw[i], raw[i + 1]) for i in range(len(raw) - 1))
+        for point in points
+    )
+    assert max_off_route < 0.05
+
+
 def test_detect_turn_zones_finds_right_angle():
     a = (48.0, 2.0)
     b = (48.0, 2.02)
@@ -157,6 +204,12 @@ def test_ease_cosine_bounds():
 def test_mode_speeds_ordered():
     assert "walk" in MODE_SPEEDS_KMH
     assert MODE_SPEEDS_KMH["walk"] < MODE_SPEEDS_KMH["car"]
+
+
+def test_production_road_jitter_is_disabled():
+    from mmaps.route import JITTER_METERS
+
+    assert JITTER_METERS == 0.0
 
 
 def test_drive_with_smooth_and_ease_ends_at_dest():

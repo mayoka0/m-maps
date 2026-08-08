@@ -31,6 +31,7 @@ from typing import List, Optional, Set
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import HTMLResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from pymobiledevice3 import usbmux
@@ -98,6 +99,9 @@ class TripLeg(BaseModel):
     kind: str  # "drive" | "fly"
     coordinates: Optional[List[List[float]]] = None  # drive: [[lon,lat],...]
     waypoints: Optional[List[List[float]]] = None    # fly: [[lon,lat],...]
+    # Hold at this arrival before the next leg. The final stop already holds
+    # indefinitely, so its value is accepted but has no effect.
+    wait_seconds: float = 0.0
 
 
 class TripRequest(BaseModel):
@@ -405,6 +409,17 @@ def _assert_safe_bind(host: str, lan: bool) -> None:
         raise ValueError(
             "Without --lan, the M Maps server must bind to localhost only."
         )
+
+
+# Modular front-end scripts (keys / provider / chrome / adapter).
+# Mount before "/" so /js/* is not swallowed by the SPA index.
+_JS_DIR = _WEB_DIR / "js"
+if _JS_DIR.is_dir():
+    app.mount(
+        "/js",
+        StaticFiles(directory=str(_JS_DIR)),
+        name="mmaps_js",
+    )
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -716,13 +731,22 @@ async def trip(request: TripRequest) -> dict:
         raise HTTPException(status_code=400, detail="A trip needs at least one leg.")
     legs = []
     for i, leg in enumerate(request.legs):
+        if not 0 <= leg.wait_seconds <= 24 * 60 * 60:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Trip leg {i + 1}: wait must be between 0 and 24 hours.",
+            )
         if leg.kind == "drive":
             if not leg.coordinates or len(leg.coordinates) < 2:
                 raise HTTPException(
                     status_code=400,
                     detail=f"Trip leg {i + 1}: drive needs at least two coordinates.",
                 )
-            legs.append({"kind": "drive", "coordinates": leg.coordinates})
+            legs.append({
+                "kind": "drive",
+                "coordinates": leg.coordinates,
+                "wait_seconds": leg.wait_seconds,
+            })
         elif leg.kind == "fly":
             if not leg.waypoints or len(leg.waypoints) < 2:
                 raise HTTPException(
@@ -730,7 +754,11 @@ async def trip(request: TripRequest) -> dict:
                     detail=f"Trip leg {i + 1}: fly needs at least two waypoints.",
                 )
             # Always land at nearest airport — same rule as standalone Fly.
-            legs.append({"kind": "fly", "waypoints": _snap_fly_waypoints(leg.waypoints)})
+            legs.append({
+                "kind": "fly",
+                "waypoints": _snap_fly_waypoints(leg.waypoints),
+                "wait_seconds": leg.wait_seconds,
+            })
         else:
             raise HTTPException(
                 status_code=400,
@@ -753,6 +781,14 @@ async def stop_move() -> dict:
     session = _require_session(app)
     await session.stop_movement()
     return {"ok": True}
+
+
+@app.post("/trip/leave_now")
+async def trip_leave_now() -> dict:
+    """Skip the current between-stop wait without cancelling the trip."""
+    session = _require_session(app)
+    skipped = await session.leave_now()
+    return {"ok": True, "skipped": skipped}
 
 
 @app.post("/stop")

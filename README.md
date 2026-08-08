@@ -14,9 +14,12 @@ It's open source specifically so anyone can read exactly what it does to their p
 - **Teleport** — jump the phone to any point on the map
 - **Route** — travel real roads at Walk / Bicycle / Motorcycle / Car speed (OSRM)
 - **Fly** — straight great-circle flight to the nearest real passenger airport
-- **Multi-stop trips** — ordered stops with automatic fly/drive legs
+- **Multi-stop trips** — ordered stops with automatic fly/drive legs, optional wait times, and
+  a live “Leave now” control
 - **Place search** — OpenStreetMap Nominatim (place names) or raw coordinates
-- **Map styles** — OpenFreeMap basemaps (Liberty, Bright, Positron, Dark, Fiord) plus a Normal / 3D camera toggle
+- **Map providers** — free OpenFreeMap styles plus optional Google Maps with your own API key
+- **Map views** — Liberty, Bright, Positron, Dark, Fiord, Normal/3D, and Google road/satellite/
+  hybrid/terrain views
 - Live USB device detection with a confirm prompt before spoofing starts
 
 ## Requirements
@@ -83,14 +86,19 @@ the server (Ctrl+C) when you are done.
 
 On the map: pick a **Mode** (Teleport, Route, or Multi-stop) and, for Route, a
 **Speed** (Walk / Bicycle / Motorcycle / Car / Fly). Click the map or use the
-**search box** to pick a place. First point places you; then teleport, follow
-roads, fly, or run a multi-stop trip. **Stop here** holds the current point;
-**Stop & restore GPS** clears the spoof entirely.
+collapsible **search** control to pick a place. Teleport asks for confirmation
+before moving. Route follows roads, Fly travels a great-circle path, and
+Multi-stop can hold at intermediate stops for a chosen amount of time.
+**Stop here** holds the current point; **Stop & restore GPS** clears the spoof
+entirely.
 
 Road routes come from the free public OSRM demo (no key; personal use). Place
-search uses Nominatim (no key; be polite with rate limits). Map tiles are
-OpenFreeMap. Map/routing/search network calls happen in the UI — the Python
-backend only ever talks to your phone.
+search uses Nominatim (no key; be polite with rate limits). OpenFreeMap is the
+default map; Google Maps is optional and requires your own key, stored only in
+browser local storage. The browser/webview fetches map assets, OSRM routes,
+approximate-IP location, optional update metadata, and Google assets. The
+Python backend talks to the phone and proxies explicit Nominatim searches.
+M Maps has no telemetry or data collection.
 
 ### Command line
 

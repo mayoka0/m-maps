@@ -5,17 +5,40 @@ Unreleased develop builds use `X.Y.Z-beta.N` (not tagged as public releases).
 
 ## [Unreleased] — 1.0.4-beta.2 (develop only)
 
-### Natural motion (coordinate sequence)
+### Road fidelity and movement
 
-- **Catmull–Rom** smoothing on road routes (after light RDP) so turns are curves, not hard polygon corners. Drive + multi-stop legs.
-- **Cosine velocity easing**: ramp up from rest at start, ease down into the destination, and dip through sharp turns. Fly gets takeoff/landing ramps only (great-circle path is already smooth).
+- Road playback now follows the complete OSRM geometry exactly by default. Unconstrained
+  Catmull–Rom smoothing is legacy opt-in only because it could cut a junction, briefly enter a
+  nearby road, and then double back.
+- Removed synthetic lateral jitter so generated road points stay on the router's centerline.
+- **Cosine velocity easing** still ramps from rest, eases into the destination, and slows through
+  sharp turns without changing the routed geometry. Fly uses takeoff/landing ramps.
 - Protocol still only sets lat/lon — naturalness comes entirely from the point stream and timing.
+
+### Map and interface
+
+- Added optional Google Maps support with a bring-your-own API key stored in browser localStorage;
+  OpenFreeMap remains the free no-key default.
+- Added provider-neutral overlays and hardened provider switching/retry behavior.
+- Redesigned the controls as one translucent command bar with compact device details, collapsed
+  explicit search, settings, and clearer visual hierarchy.
+- Teleport map clicks now require confirmation, preventing an accidental click from moving the
+  phone immediately.
+- Disabled repeated MapLibre worlds and added viewport-aware Google minimum zoom/bounds.
+- Reduced Google zoom lag by removing expensive backdrop blur while Google tiles animate.
+
+### Multi-stop waits
+
+- Stops can hold for a preset or custom 1–1,440 minute dwell before the next leg.
+- Added a live wait countdown and **Leave now** action; the final stop continues to hold normally.
+- Kept wait selectors stable across one-second status polling so their menus no longer disappear
+  while the user is choosing a duration.
 
 ### Realistic speeds (from beta.1)
 
 - Road speeds: walk 5, bicycle 16, motorcycle 55, car **60** km/h. Duration ≈ path distance ÷ speed.
 - Flight cruise ~**875** km/h (mild slow/normal/fast ±15%); no 60–240× compression.
-- Drive tick 0.25 s + small spatial jitter; fly tick 0.5 s, no jitter.
+- Drive tick 0.25 s with no lateral jitter; fly tick 0.5 s, no jitter.
 
 ### Beta channel
 

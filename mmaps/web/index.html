@@ -11,10 +11,13 @@
       - MapLibre GL JS from a CDN (pinned version),
       - vector map styles/tiles from OpenFreeMap (tiles.openfreemap.org) —
         free, unlimited, no API key; OpenMapTiles schema + OSM data,
+      - optional Google Maps JS API when the user pastes their own key
+        (bring-your-own-key; stored in localStorage only; never sent to our backend),
       - road routes from the public OSRM demo API (router.project-osrm.org),
       - place search: the page calls our local GET /geocode, which proxies
-        Nominatim (no key; personal use; proper User-Agent). Explicit Search /
-        Enter only. Raw coordinates are parsed in the browser (no network).
+        Nominatim (no key; personal use; proper User-Agent). Search runs only
+        on explicit Enter / Search; raw coordinates are parsed in the browser.
+      - IP approx location: browser → geojs.io / ipwho.is (keyless, city-level).
     Search only finds and shows a place — the phone never moves until the user
     clicks "Move here". The control page is usually localhost; with serve --lan
     it is also reachable from other devices on the same Wi-Fi.
@@ -120,23 +123,66 @@
     }
 
     /* ---- Header / status bar ------------------------------------------- */
+    /* High z-index + overflow clip on the map so the MapLibre canvas cannot
+       steal clicks meant for Mode/Search/header (common multi-click cause). */
     header {
       display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
       padding: 10px 16px;
       border-bottom: 1px solid var(--glass-border);
       background: var(--glass-strong);
-      z-index: 30;
+      position: relative;
+      /* Must sit above the following controls sibling so the device-details
+         popover is never clipped/covered by Search and Mode. */
+      z-index: 110;
+      flex-shrink: 0;
+      pointer-events: auto;
     }
     .brand {
       font-weight: 650; font-size: 15px; letter-spacing: 0.2px; white-space: nowrap;
       color: var(--text);
       text-shadow: 0 1px 1px rgba(0,0,0,0.35);
     }
-    .sep {
-      width: 1px; height: 22px; flex-shrink: 0;
-      background: var(--glass-border-strong);
+    .sep { display: none; }
+    .deviceSummaryWrap { position: relative; min-width: 0; }
+    #deviceSummary {
+      display: flex; align-items: center; gap: 10px; min-width: 210px;
+      padding: 7px 11px; border-radius: 10px; text-align: left;
+      background: rgba(255,255,255,0.055); border-color: var(--glass-border);
+      -webkit-backdrop-filter: none; backdrop-filter: none;
     }
-    .chips { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; min-width: 0; flex: 1 1 auto; }
+    #deviceSummary:hover, #deviceSummary[aria-expanded="true"] {
+      background: rgba(255,255,255,0.1); border-color: var(--glass-border-strong);
+    }
+    .deviceSummaryCopy { display: grid; gap: 2px; min-width: 0; }
+    #deviceName { color: var(--text); font-size: 12.5px; font-weight: 650; line-height: 1.15; }
+    #deviceSummaryState {
+      color: var(--muted); font-size: 11px; font-weight: 500; line-height: 1.15;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .deviceChevron {
+      width: 7px; height: 7px; margin-left: auto; flex-shrink: 0;
+      border-right: 1.5px solid var(--muted); border-bottom: 1.5px solid var(--muted);
+      transform: rotate(45deg) translateY(-2px); transition: transform .15s ease;
+    }
+    #deviceSummary[aria-expanded="true"] .deviceChevron {
+      transform: rotate(225deg) translate(-1px, -1px);
+    }
+    #deviceDetails {
+      display: none; position: absolute; top: calc(100% + 8px); left: 0;
+      width: min(330px, calc(100vw - 24px)); padding: 8px;
+      background: var(--panel-solid); border: 1px solid var(--glass-border-strong);
+      border-radius: var(--radius); box-shadow: var(--glass-shadow); z-index: 130;
+    }
+    #deviceDetails.open { display: grid; }
+    .deviceDetailRow {
+      display: flex; justify-content: space-between; align-items: baseline; gap: 16px;
+      min-height: 30px; padding: 7px 8px; border-radius: 7px;
+      color: var(--muted); font-size: 11.5px;
+    }
+    .deviceDetailRow + .deviceDetailRow { border-top: 1px solid rgba(255,255,255,0.07); }
+    .deviceDetailRow b { color: var(--text); font-weight: 600; text-align: right; }
+    .deviceDetailRow.detailLocation b { font-variant-numeric: tabular-nums; font-size: 11px; }
+    .deviceDetailRow[style*="display:none"] { display: none !important; }
     .chip {
       display: inline-flex; align-items: center; gap: 6px;
       background: var(--glass-chip);
@@ -199,19 +245,6 @@
     .dot.err { background: var(--danger); }
     .spacer { flex: 1; min-width: 8px; }
     .headerActions { display: flex; gap: 8px; align-items: center; flex-shrink: 0; }
-    #styleSelect {
-      font: inherit; font-size: 12.5px; font-weight: 600; color: var(--text);
-      background: var(--glass-chip);
-      border: 1px solid var(--glass-border);
-      border-radius: var(--radius-sm);
-      padding: 7px 10px; max-width: 140px; cursor: pointer;
-      -webkit-backdrop-filter: blur(12px);
-      backdrop-filter: blur(12px);
-    }
-    /* Compact Normal / 3D camera toggle (independent of color style). */
-    #viewSeg.seg button {
-      padding: 7px 10px; font-size: 12px;
-    }
 
     /* ---- Control bar: search + mode + speed ---------------------------- */
     #controls {
@@ -219,7 +252,10 @@
       padding: 10px 16px;
       border-bottom: 1px solid var(--glass-border);
       background: var(--glass);
-      z-index: 20;
+      position: relative;
+      z-index: 100;
+      flex-shrink: 0;
+      pointer-events: auto;
     }
     .controlGroup {
       display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-width: 0;
@@ -307,6 +343,15 @@
     }
     #tripList ol { margin: 0; padding-left: 0; list-style: none; }
     #tripList li { color: var(--text); margin: 3px 0; line-height: 1.3; }
+    #tripList li.tripStopRow {
+      display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+    }
+    #tripList .tripStopName { flex: 1 1 120px; min-width: 80px; }
+    #tripList .waitSelect {
+      max-width: 116px; padding: 3px 22px 3px 7px; border-radius: 7px;
+      border: 1px solid var(--glass-border); background: var(--glass-chip);
+      color: var(--text); font: inherit; font-size: 11px;
+    }
     #tripList .empty { color: var(--muted); font-style: normal; }
     #tripList .legtag {
       display: inline-block; font-size: 10px; font-weight: 700; text-transform: uppercase;
@@ -326,8 +371,8 @@
       background: var(--fly); color: #04211d;
     }
     #spoofChip { display: none; }
-    /* Keep control bar above the map so clicks never fall through. */
-    #controls { position: relative; z-index: 20; }
+    /* Do NOT re-declare #controls z-index here — a lower value was undoing
+       the header/controls stacking fix and made Mode/Search feel multi-click. */
 
     /* ---- Buttons ------------------------------------------------------- */
     button {
@@ -370,7 +415,267 @@
     }
     button.ghost:hover { border-color: var(--glass-border-strong); }
 
-    #map { flex: 1; position: relative; min-height: 0; }
+    /* Map stack: MapLibre + optional Google Maps. Overlays are positioned
+       children — NOT a full-screen hit layer (that ate clicks in pywebview).
+       overflow:hidden keeps the GL canvas from covering header/controls. */
+    #mapArea {
+      flex: 1;
+      position: relative;
+      min-height: 0;
+      z-index: 1;
+      overflow: hidden;
+    }
+    /*
+     * Two full-pane maps, stacked:
+     *   default: MapLibre on top (z=2), #gmap empty/hidden
+     *   loading Google: #gmap full-size UNDER MapLibre (z=1, no pointer events)
+     *                  so Google can render for real without covering UI or stealing clicks
+     *   Google active: #gmap on top (z=2), MapLibre pointer-events none / visibility hidden
+     * Never use visibility:hidden on #gmap while Google is initializing — that caused Oops.
+     */
+    #map, #gmap {
+      position: absolute; inset: 0; width: 100%; height: 100%;
+    }
+    #map {
+      z-index: 2;
+    }
+    #map.ml-suppressed {
+      /* display:none stops the hidden WebGL map from painting while Google's
+         DOM/tile surface animates. switchToMapLibre resizes it before reveal. */
+      display: none;
+      pointer-events: none;
+    }
+    #gmap {
+      z-index: 1;
+      display: none;
+      pointer-events: none;
+    }
+    #gmap.gmap-loading {
+      display: block;
+      pointer-events: none;
+      z-index: 1; /* under MapLibre */
+    }
+    #gmap.gmap-active {
+      display: block;
+      pointer-events: auto;
+      z-index: 3; /* over MapLibre */
+    }
+
+    /* Backdrop blur over moving Google tiles is disproportionately expensive
+       in WebKit/pywebview. Keep the same hierarchy with opaque fallbacks while
+       Google is active; OpenFreeMap retains the full glass treatment. */
+    body.provider-google .glass,
+    body.provider-google header,
+    body.provider-google #controls,
+    body.provider-google #searchResults,
+    body.provider-google #tripList,
+    body.provider-google #findPanel,
+    body.provider-google #goPanel,
+    body.provider-google #moveBar,
+    body.provider-google #hint,
+    body.provider-google #updateBanner,
+    body.provider-google #devicePrompt,
+    body.provider-google #lanBanner,
+    body.provider-google #banner,
+    body.provider-google .chip,
+    body.provider-google .seg,
+    body.provider-google .searchRow input,
+    body.provider-google button,
+    body.provider-google #settingsBtn,
+    body.provider-google #settingsPanel {
+      -webkit-backdrop-filter: none !important;
+      backdrop-filter: none !important;
+    }
+    body.provider-google header,
+    body.provider-google #controls,
+    body.provider-google #searchResults,
+    body.provider-google #tripList,
+    body.provider-google #findPanel,
+    body.provider-google #goPanel,
+    body.provider-google #moveBar,
+    body.provider-google #hint,
+    body.provider-google #settingsPanel {
+      background: var(--panel-solid);
+    }
+    body.provider-google .chip,
+    body.provider-google .seg,
+    body.provider-google .searchRow input,
+    body.provider-google button:not(.primary):not(.danger),
+    body.provider-google #settingsBtn {
+      background: var(--panel-2-solid);
+    }
+    /* Keep MapLibre canvas inside the map pane only. */
+    #map .maplibregl-map,
+    #map .maplibregl-canvas-container,
+    #map .maplibregl-canvas {
+      max-width: 100% !important;
+      max-height: 100% !important;
+    }
+
+    /* Settings gear — top-right corner of the map (not auth). */
+    #settingsBtn {
+      position: absolute; top: 12px; right: 12px; z-index: 6;
+      width: 40px; height: 40px; padding: 0;
+      display: flex; align-items: center; justify-content: center;
+      border-radius: 50%;
+      background: var(--glass-strong);
+      border: 1px solid var(--glass-border);
+      color: var(--text);
+      cursor: pointer;
+      box-shadow: var(--glass-shadow);
+      -webkit-backdrop-filter: saturate(160%) blur(var(--blur));
+      backdrop-filter: saturate(160%) blur(var(--blur));
+      pointer-events: auto;
+    }
+    #settingsBtn:hover { border-color: var(--glass-border-strong); background: rgba(32, 38, 50, 0.75); }
+    /* No transform:scale on :active — WebKit/pywebview can mis-hit the next click. */
+    #settingsBtn svg { width: 20px; height: 20px; display: block; pointer-events: none; }
+
+    #settingsPanel {
+      display: none;
+      position: absolute; top: 60px; right: 12px; z-index: 7;
+      width: min(380px, calc(100vw - 24px));
+      max-height: min(520px, calc(100% - 72px));
+      overflow-x: hidden;
+      overflow-y: auto;
+      background: var(--glass-strong);
+      border: 1px solid var(--glass-border);
+      border-radius: var(--radius);
+      padding: 14px 16px 12px;
+      box-shadow: var(--glass-shadow);
+      -webkit-backdrop-filter: saturate(160%) blur(var(--blur));
+      backdrop-filter: saturate(160%) blur(var(--blur));
+      /* Hidden ⇒ no hit testing (same contract as find/go panels). */
+      pointer-events: none;
+    }
+    #settingsPanel.open {
+      display: block;
+      pointer-events: auto;
+    }
+    #settingsPanel .settingsTitle {
+      font-size: 15px; font-weight: 700; color: var(--text); margin: 0 0 4px;
+    }
+    #settingsPanel .settingsSub {
+      font-size: 12px; color: var(--muted); margin: 0 0 14px; line-height: 1.4;
+    }
+    #settingsPanel .settingsSection {
+      margin: 0 0 16px;
+      padding: 0 0 14px;
+      border-bottom: 1px solid var(--glass-border);
+    }
+    #settingsPanel .settingsSection:last-of-type {
+      border-bottom: none;
+      margin-bottom: 8px;
+      padding-bottom: 4px;
+    }
+    #settingsPanel .settingsSectionTitle {
+      font-size: 11px; font-weight: 700; text-transform: uppercase;
+      letter-spacing: 0.65px; color: var(--muted);
+      margin: 0 0 10px;
+    }
+    #settingsPanel label.settingsLabel {
+      display: block; font-size: 11px; text-transform: uppercase;
+      letter-spacing: 0.6px; color: var(--muted); font-weight: 600;
+      margin: 0 0 6px;
+    }
+    #settingsPanel .settingsField {
+      margin-bottom: 12px;
+    }
+    #settingsPanel .settingsField:last-child { margin-bottom: 0; }
+    #settingsPanel .settingsFieldRow {
+      display: flex; gap: 8px; align-items: stretch; margin-bottom: 8px;
+    }
+    #settingsPanel #styleSelect,
+    #settingsPanel #gmapsMapTypeSelect {
+      display: block;
+      width: 100%;
+      max-width: none;
+      font: inherit; font-size: 13px; font-weight: 600; color: var(--text);
+      background: rgba(0,0,0,0.28);
+      border: 1px solid var(--glass-border);
+      border-radius: var(--radius-sm);
+      padding: 8px 10px;
+      cursor: pointer;
+    }
+    #settingsPanel #styleSelect:disabled,
+    #settingsPanel #gmapsMapTypeSelect:disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
+    }
+    #settingsPanel .seg {
+      width: 100%;
+      flex-wrap: wrap;
+    }
+    #settingsPanel #viewSeg.seg button {
+      flex: 1 1 auto;
+      padding: 8px 10px;
+      font-size: 12.5px;
+    }
+    #settingsPanel #mapProviderSeg.seg button {
+      flex: 1 1 auto;
+      padding: 8px 10px;
+      font-size: 12.5px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+    }
+    #settingsPanel #mapProviderSeg .gIcon {
+      width: 14px; height: 14px; display: block; flex-shrink: 0;
+      pointer-events: none;
+    }
+    #gmapsMapTypeWrap[hidden] {
+      display: none !important;
+    }
+    #gmapsApiKeyInput {
+      flex: 1; min-width: 0;
+      font: inherit; font-size: 13px; color: var(--text);
+      background: rgba(0,0,0,0.28);
+      border: 1px solid var(--glass-border);
+      border-radius: var(--radius-sm);
+      padding: 8px 10px;
+    }
+    #gmapsApiKeyInput:focus {
+      outline: none; border-color: rgba(109, 124, 255, 0.55);
+    }
+    #gmapsKeyStatus {
+      font-size: 12.5px; line-height: 1.4; min-height: 1.4em;
+      margin: 4px 0 10px; color: var(--muted);
+    }
+    #gmapsKeyStatus.ok { color: var(--ok); }
+    #gmapsKeyStatus.err { color: #ffb4b8; }
+    #settingsPanel .settingsActions {
+      display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end;
+      padding-top: 4px;
+    }
+    #settingsPanel .settingsKeyActions {
+      display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end;
+      margin-top: 4px;
+    }
+
+    /* Attribution bottom-left; bottom-right is MapLibre/Google zoom only. */
+    .maplibregl-ctrl-bottom-left .maplibregl-ctrl-attrib {
+      max-width: min(42vw, 280px);
+    }
+
+    #map { /* MapLibre canvas host */ }
+
+    /* Press feedback without transform (transform breaks click hit-testing in pywebview). */
+    button.primary:active,
+    button.danger:active,
+    .seg button:active {
+      filter: brightness(1.08);
+    }
+    .seg button:disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
+    }
+    .seg button,
+    #controls button,
+    header button {
+      position: relative;
+      z-index: 1;
+    }
 
     /* ---- Banners ------------------------------------------------------- */
     #lanBanner {
@@ -378,6 +683,7 @@
       background: rgba(240, 113, 120, 0.2);
       color: #ffd0d3;
       border-bottom: 1px solid rgba(240, 113, 120, 0.4);
+      position: relative; z-index: 90; flex-shrink: 0;
     }
     #lanBanner b { color: #fff; font-weight: 650; }
     /* Device-confirm prompt: same visual weight as color-coded banners. */
@@ -385,6 +691,7 @@
       display: none; padding: 10px 16px;
       background: rgba(109, 124, 255, 0.18);
       border-bottom: 1px solid rgba(109, 124, 255, 0.4);
+      position: relative; z-index: 90; flex-shrink: 0;
     }
     #devicePrompt .devicePromptInner {
       display: flex; align-items: flex-start; gap: 12px;
@@ -403,6 +710,25 @@
       background: rgba(240, 180, 41, 0.16);
       color: #ffe2a0;
       border-bottom: 1px solid rgba(240, 180, 41, 0.35);
+      position: relative; z-index: 90; flex-shrink: 0;
+      align-items: center; gap: 12px; flex-wrap: wrap;
+    }
+    #banner .bannerMsg { flex: 1 1 200px; min-width: 0; line-height: 1.4; }
+    #banner .bannerAction {
+      flex: 0 0 auto;
+      font: inherit; font-size: 12.5px; font-weight: 700;
+      padding: 6px 12px; border-radius: var(--radius-sm);
+      border: 1px solid rgba(255, 255, 255, 0.35);
+      background: rgba(255, 255, 255, 0.14);
+      color: #fff;
+      cursor: pointer;
+    }
+    #banner .bannerAction:hover {
+      background: rgba(255, 255, 255, 0.22);
+    }
+    #banner.banner-error .bannerAction {
+      border-color: rgba(255, 200, 200, 0.45);
+      background: rgba(255, 255, 255, 0.12);
     }
     /* Fatal errors use danger red; advisories stay amber. */
     #banner.banner-error {
@@ -425,6 +751,7 @@
       background: rgba(109, 124, 255, 0.28);
       color: #e4e8ff;
       border-bottom: 1px solid rgba(140, 155, 255, 0.55);
+      position: relative; z-index: 90; flex-shrink: 0;
       box-shadow:
         inset 0 1px 0 rgba(255,255,255,0.14),
         inset 3px 0 0 0 var(--accent),
@@ -457,26 +784,38 @@
       color: var(--muted); font-weight: 600;
     }
 
-    /* ---- Bottom-center cards ------------------------------------------- */
+    /* ---- Bottom-center cards (only the card hits — not a full-screen layer) */
     .floatCenter {
       position: absolute; bottom: calc(20px + var(--safe-bottom)); left: 50%;
       transform: translateX(-50%); z-index: 5; max-width: min(440px, calc(100vw - 24px));
     }
     #hint {
+      /* Sit above bottom-left attribution so they don’t collide. */
+      bottom: calc(44px + var(--safe-bottom));
       background: var(--glass-strong);
       border: 1px solid var(--glass-border);
       padding: 7px 14px; border-radius: 999px; font-size: 13px; color: var(--muted);
-      pointer-events: none; white-space: nowrap; text-align: center;
+      /* Must stay none — a full-width pill must not steal map / control clicks. */
+      pointer-events: none !important;
+      white-space: nowrap; text-align: center;
       text-shadow: 0 1px 2px rgba(0,0,0,0.4);
+      max-width: min(520px, calc(100vw - 120px));
+      overflow: hidden;
+      text-overflow: ellipsis;
     }
-    /* Shared card chrome for find + go panels. */
+    /* Shared card chrome for find + go panels. Hidden ⇒ no hit testing. */
     #findPanel, #goPanel {
       display: none;
+      pointer-events: none;
       background: var(--glass-strong);
       border: 1px solid var(--glass-border);
       border-radius: var(--radius);
       padding: 13px 15px;
       width: max-content; max-width: min(440px, calc(100vw - 24px));
+    }
+    #findPanel.open, #goPanel.open {
+      display: block;
+      pointer-events: auto;
     }
     #findPanel .title, #goPanel .title {
       font-size: 13px; color: var(--muted); margin-bottom: 10px; line-height: 1.35;
@@ -487,28 +826,127 @@
     }
 
     #moveBar {
-      display: none; align-items: center; gap: 14px;
+      display: none;
+      pointer-events: none;
+      align-items: center; gap: 14px;
       background: var(--glass-strong);
       border: 1px solid var(--glass-border);
       border-radius: 999px;
       padding: 8px 8px 8px 16px;
     }
+    #moveBar.open {
+      display: flex;
+      pointer-events: auto;
+    }
     #moveBar .label { font-size: 13px; color: var(--text); }
     #moveBar .label b { color: #c5cbff; }
 
+    /* ---- Unified floating command bar --------------------------------- */
+    header {
+      position: absolute;
+      top: calc(12px + var(--safe-top));
+      left: calc(12px + var(--safe-left));
+      right: calc(12px + var(--safe-right));
+      width: auto;
+      padding: 8px 10px;
+      gap: 9px;
+      border: 1px solid var(--glass-border-strong);
+      border-radius: 16px;
+      background: rgba(17, 21, 29, 0.46);
+      box-shadow: var(--glass-shadow);
+      -webkit-backdrop-filter: saturate(175%) blur(24px);
+      backdrop-filter: saturate(175%) blur(24px);
+    }
+    header #controls {
+      display: flex;
+      flex: 0 1 auto;
+      min-width: 0;
+      padding: 0;
+      gap: 9px;
+      border: 0;
+      background: transparent;
+      box-shadow: none;
+      -webkit-backdrop-filter: none;
+      backdrop-filter: none;
+      position: static;
+      z-index: auto;
+    }
+    header .brand { margin: 0 2px 0 1px; }
+    header .spacer { flex: 1 1 auto; min-width: 0; }
+    header .headerActions { gap: 7px; }
+    header #deviceSummary { min-width: 190px; }
+    header #controls .tlabel { display: none; }
+    header #controls .seg button { padding: 8px 10px; font-size: 12px; }
+    header.searching #controls { flex: 1 1 360px; }
+    header.searching #controls .controlGroup { display: none !important; }
+
+    /* Search occupies one icon until the user asks for the input. */
+    header .searchWrap {
+      flex: 0 0 38px;
+      min-width: 38px;
+      max-width: 38px;
+      transition: flex-basis .18s ease, max-width .18s ease;
+    }
+    header .searchWrap.open {
+      flex: 1 1 340px;
+      max-width: 460px;
+    }
+    #searchToggle {
+      width: 38px; height: 38px; padding: 0;
+      display: flex; align-items: center; justify-content: center;
+      border-radius: 11px;
+      background: var(--glass-chip);
+    }
+    #searchToggle svg { width: 18px; height: 18px; pointer-events: none; }
+    .searchExpand { display: none; }
+    .searchWrap.open #searchToggle { display: none; }
+    .searchWrap.open .searchExpand { display: block; }
+    .searchWrap.open .searchRow input { height: 38px; }
+    .searchWrap.open #searchResults { top: calc(100% + 8px); }
+
+    /* Settings now belongs to the command bar rather than floating alone. */
+    header #settingsBtn {
+      position: static;
+      width: 38px; height: 38px; padding: 0;
+      z-index: auto; flex-shrink: 0;
+      border-radius: 11px;
+      background: var(--glass-chip);
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.08);
+      -webkit-backdrop-filter: none;
+      backdrop-filter: none;
+    }
+    #settingsPanel { top: 82px; }
+
+    /* Keep glass transparency over Google without reintroducing costly blur. */
+    body.provider-google header {
+      background: rgba(17, 21, 29, 0.72) !important;
+    }
+    body.provider-google header #controls {
+      background: transparent !important;
+    }
+
+    /* The map starts at the window edge and remains visible through glass. */
+    #mapArea { flex: 1 1 100%; min-height: 100%; }
+
     @media (max-width: 720px) {
-      header { gap: 8px 10px; padding: 8px 10px; align-items: flex-start; }
-      .sep { display: none; }
-      .brand { font-size: 14px; padding-top: 6px; }
-      .chips { order: 3; flex: 1 1 100%; width: 100%; gap: 6px; }
-      .chip { font-size: 11.5px; padding: 3px 8px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
-      .spacer { display: none; }
+      header {
+        top: calc(8px + var(--safe-top));
+        left: calc(8px + var(--safe-left));
+        right: calc(8px + var(--safe-right));
+        gap: 7px; padding: 7px;
+      }
+      .brand { font-size: 14px; }
+      #deviceSummary { min-width: 0; max-width: 190px; padding: 6px 9px; }
+      #deviceSummaryState { max-width: 130px; }
+      #deviceDetails { position: fixed; top: 62px; left: 10px; right: 10px; width: auto; }
+      header #controls { order: 3; flex: 1 1 100%; width: 100%; }
+      header .searchWrap.open { max-width: none; }
+      header .spacer { display: none; }
       .headerActions { margin-left: auto; gap: 6px; }
       .headerActions button { font-size: 12px; padding: 8px 10px; min-height: 36px; }
 
-      #controls { padding: 8px 10px; gap: 10px; }
-      .searchWrap { flex: 1 1 100%; max-width: none; }
-      .controlGroup { width: 100%; }
+      header #controls { padding: 0; gap: 7px; }
+      header .controlGroup { width: auto; }
       #speedSeg { flex-wrap: wrap; }
 
       #lanBanner, #banner, #updateBanner { padding: 8px 10px; font-size: 12px; }
@@ -525,52 +963,54 @@
         justify-content: space-between; padding: 8px 8px 8px 12px;
       }
       .maplibregl-ctrl-bottom-right { bottom: 4px !important; right: 4px !important; }
+      header #settingsBtn { width: 36px; height: 36px; }
+      #settingsPanel { top: 62px; right: 8px; width: min(360px, calc(100vw - 16px)); }
+      #hint { max-width: calc(100vw - 24px); bottom: calc(52px + var(--safe-bottom)); }
     }
   </style>
 </head>
 <body>
   <header>
     <span class="brand">M Maps</span>
-    <div class="sep"></div>
-    <div class="chips">
-      <span class="chip"><span id="deviceDot" class="dot"></span><b id="deviceName">connecting</b><span id="iosVersion"></span></span>
-      <span class="chip">Developer Mode <b id="devMode">—</b></span>
-      <span class="chip">State <b id="state">—</b></span>
-      <span class="chip" id="spoofChip">Spoof <b id="spoofState">not spoofing</b></span>
-      <span class="chip" id="coordsChip" style="display:none">Location <b id="coords"></b></span>
-      <span class="chip" id="approxChip" style="display:none" title="City/region from your Mac’s public IP — not GPS, not precise">
-        Approximate <b id="approxLabel">—</b>
-        <span class="approxNote">· IP rough</span>
-      </span>
-      <span class="chip" id="versionChip" title="Running app version">v<b id="appVersion">—</b></span>
-    </div>
-    <div class="spacer"></div>
-    <div class="headerActions">
-      <label class="tlabel" for="styleSelect" style="margin:0">Style</label>
-      <select id="styleSelect" aria-label="Map style" title="OpenFreeMap basemap colors">
-        <option value="liberty">Liberty</option>
-        <option value="bright">Bright</option>
-        <option value="positron">Positron</option>
-        <option value="dark">Dark</option>
-        <option value="fiord">Fiord</option>
-      </select>
-      <label class="tlabel" style="margin:0">View</label>
-      <div class="seg" id="viewSeg" role="group" aria-label="Map view">
-        <button type="button" data-view="normal" class="active">Normal</button>
-        <button type="button" data-view="3d">3D</button>
+    <div class="deviceSummaryWrap">
+      <button type="button" id="deviceSummary" aria-expanded="false" aria-controls="deviceDetails">
+        <span id="deviceDot" class="dot"></span>
+        <span class="deviceSummaryCopy">
+          <span id="deviceName">connecting</span>
+          <span id="deviceSummaryState">Checking connection</span>
+        </span>
+        <span class="deviceChevron" aria-hidden="true"></span>
+      </button>
+      <div id="deviceDetails" role="region" aria-label="Device details">
+        <div class="deviceDetailRow"><span>iOS</span><b id="iosVersion">—</b></div>
+        <div class="deviceDetailRow"><span>Developer Mode</span><b id="devMode">—</b></div>
+        <div class="deviceDetailRow"><span>Engine</span><b id="state">—</b></div>
+        <div class="deviceDetailRow" id="spoofChip"><span>Spoof</span><b id="spoofState">not spoofing</b></div>
+        <div class="deviceDetailRow detailLocation" id="coordsChip" style="display:none"><span>Location</span><b id="coords"></b></div>
+        <div class="deviceDetailRow" id="approxChip" style="display:none" title="City/region from your Mac’s public IP — not GPS, not precise">
+          <span>Approximate</span><b><span id="approxLabel">—</span> <span class="approxNote">· IP rough</span></b>
+        </div>
+        <div class="deviceDetailRow" id="versionChip" title="Running app version"><span>Version</span><b id="appVersion">—</b></div>
       </div>
-      <div class="sep" aria-hidden="true"></div>
-      <button id="stopBtn" class="danger" disabled>Stop &amp; restore GPS</button>
     </div>
-  </header>
-
-  <div id="controls">
+    <div id="controls">
     <div class="searchWrap">
-      <div class="searchRow">
-        <input id="searchInput" type="search" placeholder="Place or coords (Paris · 48.86, 2.29)" autocomplete="off" spellcheck="false" />
-        <button id="searchBtn" class="primary" type="button">Search</button>
+      <button type="button" id="searchToggle" aria-label="Open search" aria-expanded="false" title="Search places or coordinates">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+          <circle cx="11" cy="11" r="7"></circle>
+          <path d="m20 20-4-4"></path>
+        </svg>
+      </button>
+      <div class="searchExpand">
+        <div class="searchRow">
+          <input id="searchInput" type="search"
+                 placeholder="Search places or coordinates"
+                 autocomplete="off" spellcheck="false"
+                 title="Press Enter or Search" />
+          <button id="searchBtn" class="primary" type="button" title="Search now">Search</button>
+        </div>
+        <div id="searchResults" role="listbox"></div>
       </div>
-      <div id="searchResults" role="listbox"></div>
     </div>
 
     <div class="controlGroup" title="How you move">
@@ -603,7 +1043,18 @@
         <button type="button" id="tripClearBtn" class="ghost" disabled>Clear all</button>
       </div>
     </div>
-  </div>
+    </div>
+    <div class="spacer"></div>
+    <div class="headerActions">
+      <button type="button" id="settingsBtn" title="Settings" aria-label="Settings">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="12" cy="12" r="3"></circle>
+          <path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1-.1a1.7 1.7 0 0 0-.3 1.8V9c.3.6.9 1 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"></path>
+        </svg>
+      </button>
+      <button id="stopBtn" class="danger" title="Stop spoofing and restore the iPhone’s real GPS" disabled>Restore GPS</button>
+    </div>
+  </header>
 
   <div id="lanBanner"><b>LAN mode:</b> Anyone on this Wi-Fi network can open and control this page. Stop the server on the Mac when you are done.</div>
   <div id="updateBanner" role="status">
@@ -625,7 +1076,11 @@
     </div>
   </div>
 
-  <div id="map">
+  <div id="mapArea">
+    <div id="map"></div>
+    <div id="gmap" aria-hidden="true"></div>
+
+    <!-- Overlays are direct children (no full-screen hit-layer wrapper). -->
     <div id="hint" class="floatCenter"></div>
     <!-- Search / coordinate find: show only, never moves until Move here -->
     <div id="findPanel" class="floatCenter">
@@ -654,10 +1109,99 @@
     </div>
     <div id="moveBar" class="floatCenter">
       <span class="label" id="moveLabel">Moving</span>
+      <button id="leaveNowBtn" class="ghost" style="display:none">Leave now</button>
       <button id="stopMoveBtn" class="danger">Stop here</button>
     </div>
+
+    <!-- Legacy map-corner trigger retained hidden for a reversible migration. -->
+    <button type="button" id="settingsBtnLegacy" hidden aria-hidden="true" tabindex="-1">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <circle cx="12" cy="12" r="3"></circle>
+        <path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9c.3.6.9 1 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"></path>
+      </svg>
+    </button>
+    <div id="settingsPanel" role="dialog" aria-label="Settings" aria-modal="true">
+      <div class="settingsTitle">Settings</div>
+      <p class="settingsSub">How the map looks and which basemap to use. Local only — no accounts. Day-to-day controls (Mode, Speed, Search) stay on the main screen.</p>
+
+      <section class="settingsSection" aria-labelledby="settingsAppearTitle">
+        <h3 class="settingsSectionTitle" id="settingsAppearTitle">Map appearance</h3>
+        <div class="settingsField">
+          <label class="settingsLabel" for="styleSelect">Style</label>
+          <select id="styleSelect" aria-label="Map style" title="OpenFreeMap basemap colors">
+            <option value="liberty">Liberty</option>
+            <option value="bright">Bright</option>
+            <option value="positron">Positron</option>
+            <option value="dark">Dark</option>
+            <option value="fiord">Fiord</option>
+          </select>
+        </div>
+        <div class="settingsField">
+          <label class="settingsLabel" id="viewSegLabel">View</label>
+          <div class="seg" id="viewSeg" role="group" aria-labelledby="viewSegLabel">
+            <button type="button" data-view="normal" class="active">Normal</button>
+            <button type="button" data-view="3d">3D</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="settingsSection" aria-labelledby="settingsProviderTitle">
+        <h3 class="settingsSectionTitle" id="settingsProviderTitle">Map provider</h3>
+        <div class="settingsField">
+          <label class="settingsLabel" id="mapProviderLabel">Basemap</label>
+          <div class="seg" id="mapProviderSeg" role="group" aria-labelledby="mapProviderLabel">
+            <button type="button" id="mapProviderMaplibreBtn" data-provider="maplibre" class="active"
+                    title="OpenFreeMap basemap (no API key)" aria-pressed="true">OpenFreeMap</button>
+            <button type="button" id="gmapsToggleBtn" data-provider="google"
+                    title="Switch to Google Maps" aria-label="Google Maps" aria-pressed="false">
+              <svg class="gIcon" viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/>
+                <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/>
+                <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/>
+                <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/>
+              </svg>
+              Google
+            </button>
+          </div>
+        </div>
+        <div class="settingsField" id="gmapsMapTypeWrap" hidden aria-hidden="true">
+          <label class="settingsLabel" for="gmapsMapTypeSelect">Google map type</label>
+          <select id="gmapsMapTypeSelect" aria-label="Google map type" title="Google map type" disabled>
+            <option value="roadmap">Roadmap</option>
+            <option value="satellite">Satellite</option>
+            <option value="hybrid">Hybrid</option>
+            <option value="terrain">Terrain</option>
+          </select>
+        </div>
+      </section>
+
+      <section class="settingsSection" aria-labelledby="settingsKeyTitle">
+        <h3 class="settingsSectionTitle" id="settingsKeyTitle">Google Maps API key</h3>
+        <p class="settingsSub" style="margin-bottom:10px">Stays on this Mac only. Sent to Google when you Test or use the Google basemap — never to M Maps servers.</p>
+        <label class="settingsLabel" for="gmapsApiKeyInput">API key</label>
+        <div class="settingsFieldRow">
+          <input id="gmapsApiKeyInput" type="password" autocomplete="off" spellcheck="false"
+                 placeholder="Paste your Google Maps key" />
+        </div>
+        <div id="gmapsKeyStatus" aria-live="polite"></div>
+        <div class="settingsKeyActions">
+          <button type="button" id="gmapsKeyTestBtn">Test</button>
+          <button type="button" class="primary" id="gmapsKeySaveBtn">Save</button>
+        </div>
+      </section>
+
+      <div class="settingsActions">
+        <button type="button" class="ghost" id="settingsCloseBtn">Close</button>
+      </div>
+    </div>
+
   </div>
 
+  <!-- Modular dual-map subsystem (Streams 1–4). Cache-busted via no-store on index. -->
+  <script src="/js/mmaps-keys.js"></script>
+  <script src="/js/mmaps-chrome.js"></script>
+  <script src="/js/mmaps-map-provider.js?v=20260807-one-world"></script>
+  <script src="/js/mmaps-map-adapter.js"></script>
   <script>
     const $ = (id) => document.getElementById(id);
 
@@ -673,7 +1217,7 @@
     // IP-based rough start (city/region). Never treated as precise GPS.
     // Used as Route/Fly origin only when the phone has no spoof target yet.
     let approxOrigin = null; // { lat, lon, city, region, country, label, source }
-    let approxMarker = null;
+    // Approx map pin is owned by MMapsAdapter (showApprox/clearApprox) — not a local marker.
     let durationDefaultSec = null; // realistic ETA for open Go panel
     let durationUserEdited = false;
 
@@ -776,15 +1320,228 @@
       style: styleUrl(currentMapStyle),
       center: [0, 20],
       zoom: 1.6,
+      // At this scale one complete world fills the desktop viewport without
+      // exposing duplicated copies to either side.
+      minZoom: 1.6,
+      renderWorldCopies: false,
       pitch: mapView3d ? MAP_3D_PITCH : 0,
       bearing: mapView3d ? MAP_3D_BEARING : 0,
-      attributionControl: true
+      // Bottom-left attribution so bottom-right is only zoom + Google toggle.
+      attributionControl: { position: 'bottom-left', compact: true }
     });
     if (!mapView3d) map.dragRotate.disable();
+    // Zoom only — G button is a fixed sibling above this stack (never reparented).
     map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'bottom-right');
 
     syncStyleSelect();
     syncViewSeg();
+
+    // =====================================================================
+    // Dual-map subsystem wiring (modules: MMapsKeys, MMapsProvider, MMapsChrome, MMapsAdapter)
+    // =====================================================================
+    function setGmapsKeyStatus(text, kind) {
+      const el = $('gmapsKeyStatus');
+      if (!el) return;
+      el.textContent = text || '';
+      el.classList.remove('ok', 'err');
+      if (kind === 'ok') el.classList.add('ok');
+      if (kind === 'err') el.classList.add('err');
+    }
+
+    function openSettingsPanel() {
+      const panel = $('settingsPanel');
+      if (!panel) return;
+      const input = $('gmapsApiKeyInput');
+      if (input) input.value = MMapsKeys.getKeyForSettingsField();
+      setGmapsKeyStatus('', null);
+      MMapsChrome.setPanel('settingsPanel', true);
+    }
+    function closeSettingsPanel() {
+      MMapsChrome.setPanel('settingsPanel', false);
+    }
+    function isSettingsOpen() {
+      return MMapsChrome.isPanelOpen('settingsPanel');
+    }
+
+    function setFloatPanel(id, open, displayWhenOpen) {
+      MMapsChrome.setPanel(id, open, displayWhenOpen);
+    }
+    function isFloatPanelOpen(id) {
+      return MMapsChrome.isPanelOpen(id);
+    }
+
+    // mapProvider compatibility shim (some code may still read the name)
+    Object.defineProperty(window, '__mmapsProviderCompat', { get() { return MMapsProvider.getProvider(); } });
+
+    MMapsProvider.init({
+      maplibre: map,
+      onMapClick: (lat, lon) => { handleMapClick(lat, lon); },
+      onProviderChange: (p) => {
+        MMapsAdapter.onProviderChanged(p);
+        // Style/view disable is handled inside provider.notify
+      }
+    });
+    MMapsAdapter.init({ maplibre: map, maplibregl: maplibregl });
+
+    async function switchToGoogleMaps() {
+      const key = MMapsKeys.getActiveKey(
+        ($('gmapsApiKeyInput') && $('gmapsApiKeyInput').value) || ''
+      );
+      if (!key) {
+        showBanner('Add a Google Maps API key in Settings first, then try again.', 'warn');
+        openSettingsPanel();
+        return;
+      }
+      const result = await MMapsProvider.switchToGoogle(key);
+      if (!result.ok) {
+        if (isKeySwitchReloadError(result)) {
+          showKeySwitchReloadBanner(result.reason);
+          setGmapsKeyStatus('Failed: different key already loaded — reload the page to switch.', 'err');
+        } else {
+          showBanner(result.reason || 'Google Maps failed to load.', 'error');
+          openSettingsPanel();
+          setGmapsKeyStatus('Failed: ' + (result.reason || 'map did not load'), 'err');
+        }
+        return;
+      }
+      hideBanner();
+    }
+    function switchToMapLibre() {
+      MMapsProvider.switchToMapLibre();
+    }
+    async function toggleGoogleMaps() {
+      const key = MMapsKeys.getActiveKey(
+        ($('gmapsApiKeyInput') && $('gmapsApiKeyInput').value) || ''
+      );
+      const result = await MMapsProvider.toggle(key);
+      if (result && result.ok === false && MMapsProvider.getProvider() === 'maplibre' && key) {
+        if (isKeySwitchReloadError(result)) {
+          showKeySwitchReloadBanner(result.reason);
+          setGmapsKeyStatus('Failed: different key already loaded — reload the page to switch.', 'err');
+        } else {
+          showBanner(result.reason || 'Google Maps failed to load.', 'error');
+          openSettingsPanel();
+          setGmapsKeyStatus('Failed: ' + (result.reason || 'map did not load'), 'err');
+        }
+      } else if (result && result.ok) {
+        hideBanner();
+      }
+    }
+
+    // Shared click path for MapLibre + Google Maps.
+    async function handleMapClick(lat, lon) {
+      if (moving) return;
+      hideSearchResults();
+      setSearchOpen(false);
+      closeSettingsPanel();
+      if (movementMode === 'teleport' || (!currentTarget && !approxOrigin)) {
+        // A map click is only a proposal.  This prevents an accidental click
+        // from moving the real phone immediately; Move here performs /spoof.
+        showFoundPlace(lat, lon, null);
+      } else if (movementMode === 'multistop') {
+        addTripStop(lat, lon, null);
+      } else if (movementMode === 'route' && !currentTarget && approxOrigin) {
+        await proposeTravel(lat, lon, null);
+      } else if (!currentTarget) {
+        showFoundPlace(lat, lon, null);
+      } else {
+        await proposeTravel(lat, lon, null);
+      }
+    }
+
+    function mapFlyTo(lon, lat, zoom) {
+      MMapsAdapter.flyTo(lon, lat, zoom);
+    }
+
+    (function bindGoogleMapsUi() {
+      const settingsBtn = $('settingsBtn');
+      const settingsClose = $('settingsCloseBtn');
+      const testBtn = $('gmapsKeyTestBtn');
+      const saveBtn = $('gmapsKeySaveBtn');
+      const toggleBtn = $('gmapsToggleBtn');
+      const maplibreBtn = $('mapProviderMaplibreBtn');
+      const typeSel = $('gmapsMapTypeSelect');
+      if (settingsBtn) {
+        settingsBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          if (isSettingsOpen()) closeSettingsPanel();
+          else openSettingsPanel();
+        });
+      }
+      if (settingsClose) {
+        settingsClose.addEventListener('click', (e) => {
+          e.stopPropagation();
+          closeSettingsPanel();
+        });
+      }
+      if (saveBtn) {
+        saveBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const key = ($('gmapsApiKeyInput') && $('gmapsApiKeyInput').value || '').trim();
+          const res = MMapsKeys.save(key);
+          setGmapsKeyStatus(res.reason, 'ok');
+          if (!key && MMapsProvider.getProvider() === 'google') switchToMapLibre();
+        });
+      }
+      if (testBtn) {
+        testBtn.addEventListener('click', async (e) => {
+          e.stopPropagation();
+          const key = ($('gmapsApiKeyInput') && $('gmapsApiKeyInput').value || '').trim();
+          setGmapsKeyStatus('Testing key with Google…', null);
+          testBtn.disabled = true;
+          try {
+            const result = await MMapsKeys.test(key, (k) => MMapsProvider.validateKey(k));
+            setGmapsKeyStatus(
+              (result.ok ? 'Success: ' : 'Failed: ') + result.reason,
+              result.ok ? 'ok' : 'err'
+            );
+            // Same Google platform limit as toggle: different key needs a fresh page.
+            if (!result.ok && isKeySwitchReloadError(result)) {
+              showKeySwitchReloadBanner(result.reason);
+            }
+          } finally {
+            testBtn.disabled = false;
+          }
+        });
+      }
+      // Header Map segment: OpenFreeMap | Google (same provider API as before).
+      if (maplibreBtn) {
+        maplibreBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          if (MMapsProvider.getProvider() === 'maplibre') return;
+          switchToMapLibre();
+          hideBanner();
+        });
+      }
+      if (toggleBtn) {
+        toggleBtn.addEventListener('click', async (e) => {
+          e.stopPropagation();
+          if (MMapsProvider.getProvider() === 'google') {
+            switchToMapLibre();
+            hideBanner();
+            return;
+          }
+          await switchToGoogleMaps();
+        });
+      }
+      if (typeSel) {
+        typeSel.addEventListener('change', () => {
+          const res = MMapsProvider.setMapType(typeSel.value);
+          if (res && res.ok === false) {
+            showBanner(res.reason || 'Could not change map type.', 'warn');
+            typeSel.value = MMapsProvider.getMapType();
+          }
+        });
+      }
+      document.addEventListener('click', (e) => {
+        if (!isSettingsOpen()) return;
+        const panel = $('settingsPanel');
+        const btn = $('settingsBtn');
+        if (panel && panel.contains(e.target)) return;
+        if (btn && btn.contains(e.target)) return;
+        closeSettingsPanel();
+      });
+    })();
 
     // Color style only — keep current View (3D tilt) when tiles change.
     $('styleSelect').addEventListener('change', () => {
@@ -810,56 +1567,32 @@
       });
     });
 
-    const lines = {};
-    function setLine(id, coordinates, color) { lines[id] = { coordinates, color }; renderLine(id); }
-    function removeLine(id) { delete lines[id]; if (map.getLayer(id)) map.removeLayer(id); if (map.getSource(id)) map.removeSource(id); }
-    function renderLine(id) {
-      const l = lines[id]; if (!l) return;
-      const data = { type: 'Feature', geometry: { type: 'LineString', coordinates: l.coordinates } };
-      if (map.getSource(id)) { map.getSource(id).setData(data); return; }
-      map.addSource(id, { type: 'geojson', data });
-      map.addLayer({ id, type: 'line', source: id,
-        layout: { 'line-cap': 'round', 'line-join': 'round' },
-        paint: { 'line-color': l.color, 'line-width': 4, 'line-opacity': 0.85 } });
+    // Stream 4: features use the adapter only (no dual Google helpers here).
+    function setLine(id, coordinates, color) {
+      MMapsAdapter.setLine(id, coordinates, color);
     }
-    // After every style switch (and initial load), re-attach route/flight overlays.
-    map.on('style.load', () => Object.keys(lines).forEach(renderLine));
+    function removeLine(id) {
+      MMapsAdapter.removeLine(id);
+    }
+    map.on('style.load', () => MMapsAdapter.onMaplibreStyleLoad());
 
-    // Blue = current phone spoof. Amber = found / proposed destination (not yet moved).
-    let dotMarker = null, destMarker = null;
-    let dotStale = false; // true when engine is erroring — amber "not applied" marker
     function showDot(lat, lon, { stale = false } = {}) {
-      const color = stale ? '#f59e0b' : '#3b82f6';
-      if (dotMarker && dotStale === stale) {
-        dotMarker.setLngLat([lon, lat]);
-        return;
-      }
-      if (dotMarker) { dotMarker.remove(); dotMarker = null; }
-      dotStale = stale;
-      dotMarker = new maplibregl.Marker({ color }).setLngLat([lon, lat]).addTo(map);
+      MMapsAdapter.showDot(lat, lon, { stale: !!stale });
     }
     function clearDot() {
-      if (dotMarker) { dotMarker.remove(); dotMarker = null; }
-      dotStale = false;
+      MMapsAdapter.clearDot();
     }
     function showDestMarker(lat, lon) {
-      if (destMarker) destMarker.setLngLat([lon, lat]);
-      else destMarker = new maplibregl.Marker({ color: '#f59e0b' }).setLngLat([lon, lat]).addTo(map);
+      MMapsAdapter.showDest(lat, lon);
     }
-    function clearDestMarker() { if (destMarker) { destMarker.remove(); destMarker = null; } }
-
+    function clearDestMarker() {
+      MMapsAdapter.clearDest();
+    }
     function showApproxMarker(lat, lon) {
-      if (approxMarker) {
-        approxMarker.setLngLat([lon, lat]);
-        return;
-      }
-      // Muted gray pin — distinct from blue spoof / amber destination.
-      approxMarker = new maplibregl.Marker({ color: '#94a3b8' })
-        .setLngLat([lon, lat])
-        .addTo(map);
+      MMapsAdapter.showApprox(lat, lon);
     }
     function clearApproxMarker() {
-      if (approxMarker) { approxMarker.remove(); approxMarker = null; }
+      MMapsAdapter.clearApprox();
     }
 
     /** Spoof target if set, else IP rough start — for route planning only. */
@@ -1062,7 +1795,7 @@
       if (!currentTarget) {
         showApproxMarker(info.lat, info.lon);
         try {
-          map.flyTo({ center: [info.lon, info.lat], zoom: Math.max(map.getZoom(), 9), essential: true });
+          mapFlyTo(info.lon, info.lat, Math.max(map.getZoom(), 9));
         } catch (e) { /* map may still be loading */ }
       }
       updateHint();
@@ -1182,9 +1915,12 @@
     // Map-click route ready to Go.
     let pendingRoute = null; // { dest, coordinates, distanceM, label, noRoute? }
     // Multi-stop: ordered destinations (current location is always the start).
-    let tripStops = []; // [{lat, lon, label}]
+    let tripStops = []; // [{lat, lon, label, waitSeconds}]
     let tripMarkers = []; // maplibregl.Marker[]
     let tripPreviewLegs = []; // planned leg tags for list UI
+    // Prevent the 1-second status poll from replacing native <select>
+    // elements while their menus are open.
+    let tripListRenderKey = null;
 
     function persistPref(key, value) {
       try { localStorage.setItem(key, value); } catch (e) { /* private mode / quota */ }
@@ -1258,37 +1994,27 @@
       }
     }
 
-    // Event delegation on the segment (one listener, not per-button rebinding).
-    function bindSeg(rootId, attr, handler) {
-      const root = $(rootId);
-      if (!root) return;
-      root.addEventListener('click', (e) => {
-        const btn = e.target.closest('button[' + attr + ']');
-        if (!btn || !root.contains(btn) || btn.disabled) return;
-        e.preventDefault();
-        e.stopPropagation();
-        handler(btn.getAttribute(attr));
-      });
-    }
-    bindSeg('modeSeg', 'data-mode', onModePick);
-    bindSeg('speedSeg', 'data-speed', onSpeedPick);
+    // Segment clicks via chrome module (no preventDefault; one source of behavior).
+    MMapsChrome.bindSegment('modeSeg', 'data-mode', onModePick);
+    MMapsChrome.bindSegment('speedSeg', 'data-speed', onSpeedPick);
     applyModeUI();
 
     // ---- Panels ---------------------------------------------------------
     function anyPanelOpen() {
-      return $('findPanel').style.display === 'block' || $('goPanel').style.display === 'block';
+      return isFloatPanelOpen('findPanel') || isFloatPanelOpen('goPanel');
     }
 
     function closeFindPanel({ clearMarker = true } = {}) {
       foundPlace = null;
-      $('findPanel').style.display = 'none';
+      setFloatPanel('findPanel', false);
       if (clearMarker && !pendingRoute) clearDestMarker();
       updateHint();
     }
 
     function closeGoPanel({ clearMarker = true, clearLine = true } = {}) {
       pendingRoute = null;
-      $('goPanel').style.display = 'none';
+      setFloatPanel('goPanel', false);
+      setDurationDefault(null); // don't leave a stale duration tied to a closed route
       if (clearLine) clearRouteLine();
       if (clearMarker && !foundPlace) clearDestMarker();
       updateHint();
@@ -1316,6 +2042,7 @@
     function clearTripMarkers() {
       tripMarkers.forEach((m) => { try { m.remove(); } catch (e) {} });
       tripMarkers = [];
+      MMapsAdapter.clearTripMarkers();
     }
 
     function clearTripStops({ keepMemory = false } = {}) {
@@ -1335,24 +2062,55 @@
         el.title = s.label || coordsLabel(s.lat, s.lon);
         const m = new maplibregl.Marker({ element: el }).setLngLat([s.lon, s.lat]).addTo(map);
         tripMarkers.push(m);
+        MMapsAdapter.pushTripMarkerSpec(
+          s.lat, s.lon, String(i + 1),
+          s.label || coordsLabel(s.lat, s.lon),
+          false
+        );
+      });
+    }
+
+    function makeTripListRenderKey(canEdit) {
+      return JSON.stringify({
+        canEdit,
+        stops: tripStops.map((s) => [s.lat, s.lon, s.label, Number(s.waitSeconds) || 0]),
+        previews: tripPreviewLegs
       });
     }
 
     function renderTripList() {
       const box = $('tripList');
       const canEdit = movementMode === 'multistop' && !moving;
-      if (!tripStops.length) {
-        box.innerHTML = '<span class="empty">Click the map (or search + Move here) to add stops in order.</span>';
-      } else {
-        const items = tripStops.map((s, i) => {
+      const nextRenderKey = makeTripListRenderKey(canEdit);
+      if (nextRenderKey !== tripListRenderKey) {
+        if (!tripStops.length) {
+          box.innerHTML = '<span class="empty">Click the map (or search + Move here) to add stops in order.</span>';
+        } else {
+          const items = tripStops.map((s, i) => {
           const name = escapeHtml(displayLabel(s.label, s.lat, s.lon));
           const leg = tripPreviewLegs[i];
           const tag = leg
             ? `<span class="legtag ${leg}">${leg === 'fly' ? 'Fly' : 'Drive'}</span>`
             : '';
-          return `<li><b>${i + 1}.</b> ${name}${tag}</li>`;
-        }).join('');
-        box.innerHTML = `<ol>${items}</ol>`;
+          const wait = Number(s.waitSeconds) || 0;
+          const waitPresets = [
+            [0, 'No wait'], [300, 'Wait 5 min'], [900, 'Wait 15 min'],
+            [1800, 'Wait 30 min'], [3600, 'Wait 1 hour'], [7200, 'Wait 2 hours']
+          ];
+          const isPresetWait = waitPresets.some(([seconds]) => seconds === wait);
+          const waitOptions = waitPresets.map(([seconds, label]) =>
+            `<option value="${seconds}"${wait === seconds ? ' selected' : ''}>${label}</option>`
+          ).join('') + `<option value="custom"${!isPresetWait ? ' selected' : ''}>`
+            + `${!isPresetWait ? `Custom (${formatDuration(wait)})` : 'Custom…'}</option>`;
+          return `<li class="tripStopRow"><b>${i + 1}.</b>`
+            + `<span class="tripStopName">${name}${tag}</span>`
+            + `<select class="waitSelect" data-stop-index="${i}"`
+            + `${canEdit ? '' : ' disabled'} aria-label="Wait after stop ${i + 1}">`
+            + `${waitOptions}</select></li>`;
+          }).join('');
+          box.innerHTML = `<ol>${items}</ol>`;
+        }
+        tripListRenderKey = nextRenderKey;
       }
       const hasStart = !!(currentTarget || approxOrigin);
       $('tripStartBtn').disabled = !canEdit || tripStops.length < 1 || !hasStart;
@@ -1371,12 +2129,13 @@
       }
       tripStops.push({
         lat, lon,
-        label: label || coordsLabel(lat, lon)
+        label: label || coordsLabel(lat, lon),
+        waitSeconds: 0
       });
       tripPreviewLegs = []; // invalidate preview until next Start / replan
       renderTripMarkers();
       renderTripList();
-      map.flyTo({ center: [lon, lat], zoom: Math.max(map.getZoom(), 4), essential: true });
+      mapFlyTo(lon, lat, Math.max(map.getZoom(), 4));
       hideBanner();
       updateHint();
     }
@@ -1408,7 +2167,8 @@
             kind: 'fly',
             // Destination is the *user stop*; server snaps to airport. We also
             // send the airport coords so the path matches what will play.
-            waypoints: [[from.lon, from.lat], [arrive.lon, arrive.lat]]
+            waypoints: [[from.lon, from.lat], [arrive.lon, arrive.lat]],
+            wait_seconds: Number(to.waitSeconds) || 0
           });
           kinds.push('fly');
           landings.push(arrive);
@@ -1417,7 +2177,10 @@
           from = { lat: arrive.lat, lon: arrive.lon };
         } else {
           const coords = road.route.geometry.coordinates;
-          legs.push({ kind: 'drive', coordinates: coords });
+          legs.push({
+            kind: 'drive', coordinates: coords,
+            wait_seconds: Number(to.waitSeconds) || 0
+          });
           kinds.push('drive');
           landings.push({ lat: to.lat, lon: to.lon, label: to.label, airport: false });
           pathCoords.push(...coords);
@@ -1463,6 +2226,11 @@
             el.textContent = String(i + 1);
             el.title = (s.airport ? 'Land: ' : '') + (s.label || coordsLabel(s.lat, s.lon));
             tripMarkers.push(new maplibregl.Marker({ element: el }).setLngLat([s.lon, s.lat]).addTo(map));
+            MMapsAdapter.pushTripMarkerSpec(
+              s.lat, s.lon, String(i + 1),
+              (s.airport ? 'Land: ' : '') + (s.label || coordsLabel(s.lat, s.lon)),
+              !!s.airport
+            );
           });
         }
         renderTripList();
@@ -1491,6 +2259,34 @@
     }
 
     $('tripStartBtn').addEventListener('click', () => startMultiStopTrip());
+    $('tripList').addEventListener('change', (e) => {
+      const select = e.target.closest('.waitSelect[data-stop-index]');
+      if (!select || moving) return;
+      const index = Number(select.getAttribute('data-stop-index'));
+      if (!Number.isInteger(index) || !tripStops[index]) return;
+      if (select.value === 'custom') {
+        const currentMinutes = Math.max(1, Math.round((tripStops[index].waitSeconds || 0) / 60));
+        const raw = window.prompt('How many minutes should M Maps wait at this stop?', String(currentMinutes));
+        if (raw === null) {
+          renderTripList();
+          return;
+        }
+        const minutes = Number(String(raw).trim());
+        if (!Number.isFinite(minutes) || minutes <= 0 || minutes > 1440) {
+          showBanner('Enter a wait from 1 to 1,440 minutes (24 hours).', 'warn');
+          renderTripList();
+          return;
+        }
+        tripStops[index].waitSeconds = Math.round(minutes * 60);
+        hideBanner();
+        renderTripList();
+        return;
+      }
+      tripStops[index].waitSeconds = Number(select.value) || 0;
+      // The browser already updated this native select. Mark its new value as
+      // rendered so the next status poll does not replace the element.
+      tripListRenderKey = makeTripListRenderKey(true);
+    });
     $('tripUndoBtn').addEventListener('click', () => {
       if (moving || !tripStops.length) return;
       tripStops.pop();
@@ -1547,9 +2343,9 @@
       closeGoPanel({ clearMarker: false, clearLine: true });
       foundPlace = { lat, lon, label: label || coordsLabel(lat, lon) };
       showDestMarker(lat, lon);
-      map.flyTo({ center: [lon, lat], zoom: Math.max(map.getZoom(), 10), essential: true });
+      mapFlyTo(lon, lat, Math.max(map.getZoom(), 10));
       refreshFindPanelCopy();
-      $('findPanel').style.display = 'block';
+      setFloatPanel('findPanel', true);
       hideBanner();
       updateHint();
     }
@@ -1803,7 +2599,7 @@
       };
       hideBanner();
       refreshGoPanelCopy();
-      $('goPanel').style.display = 'block';
+      setFloatPanel('goPanel', true);
       updateHint();
     }
 
@@ -1843,7 +2639,7 @@
         showBanner(routeErrorMessage(road.error, label));
         pendingRoute = { kind: 'road', dest, coordinates: null, distanceM: null, label: label || null, noRoute: true, etaSeconds: null };
         refreshGoPanelCopy();
-        $('goPanel').style.display = 'block';
+        setFloatPanel('goPanel', true);
         updateHint();
         return;
       }
@@ -1863,7 +2659,7 @@
       };
       hideBanner();
       refreshGoPanelCopy();
-      $('goPanel').style.display = 'block';
+      setFloatPanel('goPanel', true);
       updateHint();
     }
 
@@ -1878,22 +2674,9 @@
     }
 
     // ---- Map click: direct control (applies mode now). Search does not. --
-    map.on('click', async (e) => {
-      if (moving) return;
-      hideSearchResults();
-      const lat = e.lngLat.lat, lon = e.lngLat.lng;
-      // Teleport always places. Route with only IP-approx origin still plans a path.
-      if (movementMode === 'teleport' || (!currentTarget && !approxOrigin)) {
-        await teleport(lat, lon);
-      } else if (movementMode === 'multistop') {
-        addTripStop(lat, lon, null);
-      } else if (movementMode === 'route' && !currentTarget && approxOrigin) {
-        await proposeTravel(lat, lon, null);
-      } else if (!currentTarget) {
-        await teleport(lat, lon);
-      } else {
-        await proposeTravel(lat, lon, null);
-      }
+    // handleMapClick is shared with Google Maps (defined near mapProvider code).
+    map.on('click', (e) => {
+      handleMapClick(e.lngLat.lat, e.lngLat.lng);
     });
 
     // ---- Find panel (search / coordinates) — preview only until Move here
@@ -1902,7 +2685,7 @@
       if (!foundPlace || moving) return;
       const { lat, lon, label } = foundPlace;
       foundPlace = null;
-      $('findPanel').style.display = 'none';
+      setFloatPanel('findPanel', false);
       if (movementMode === 'teleport' || (!currentTarget && !approxOrigin)) {
         await teleport(lat, lon);
       } else if (movementMode === 'multistop') {
@@ -1943,7 +2726,7 @@
         const landing = pendingRoute.landing || pendingRoute.dest;
         if (!from || !landing) return;
         pendingRoute = null;
-        $('goPanel').style.display = 'none';
+        setFloatPanel('goPanel', false);
         setDurationDefault(null);
         const ok = await startFly(from, landing, durationOverride);
         if (!ok) {
@@ -1957,7 +2740,7 @@
       const coords = pendingRoute.coordinates;
       const speed = routeSpeed === 'fly' ? 'car' : routeSpeed;
       pendingRoute = null;
-      $('goPanel').style.display = 'none';
+      setFloatPanel('goPanel', false);
       setDurationDefault(null);
       const ok = await startDrive(coords, speed, durationOverride);
       if (!ok) {
@@ -1968,6 +2751,23 @@
     });
 
     // ---- Search ---------------------------------------------------------
+    // Public Nominatim forbids autocomplete. Search runs only on explicit
+    // Enter/Search; the compact control collapses when the task is complete.
+    let searchSeq = 0;
+
+    function setSearchOpen(open) {
+      const wrap = document.querySelector('.searchWrap');
+      const toggle = $('searchToggle');
+      if (!wrap || !toggle) return;
+      wrap.classList.toggle('open', !!open);
+      document.querySelector('header').classList.toggle('searching', !!open);
+      toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+      toggle.setAttribute('aria-label', open ? 'Close search' : 'Open search');
+      if (open) {
+        window.setTimeout(() => $('searchInput').focus(), 30);
+      }
+    }
+
     function hideSearchResults() {
       $('searchResults').style.display = 'none';
       $('searchResults').innerHTML = '';
@@ -1975,6 +2775,7 @@
 
     function pickSearchResult(lat, lon, label) {
       hideSearchResults();
+      setSearchOpen(false);
       // SHOW only — do not call teleport / drive.
       showFoundPlace(lat, lon, label);
     }
@@ -2000,9 +2801,13 @@
       }
 
       const box = $('searchResults');
+      const seq = ++searchSeq;
       box.innerHTML = '<div class="empty">Searching…</div>';
       box.style.display = 'block';
       const out = await searchPlaces(q);
+      // Stale response from an older keystroke — ignore.
+      if (seq !== searchSeq) return;
+      if (($('searchInput').value || '').trim() !== q) return;
       if (out.error === 'empty') {
         box.innerHTML = '<div class="empty">Type a place name or coordinates.</div>';
         return;
@@ -2062,10 +2867,25 @@
       });
     }
 
-    $('searchBtn').addEventListener('click', runSearch);
+    $('searchToggle').addEventListener('click', (e) => {
+      e.stopPropagation();
+      setSearchOpen(true);
+    });
+    document.querySelector('.searchWrap').addEventListener('click', (e) => e.stopPropagation());
+    document.addEventListener('click', () => {
+      if (!document.querySelector('.searchWrap').classList.contains('open')) return;
+      hideSearchResults();
+      setSearchOpen(false);
+    });
+    $('searchBtn').addEventListener('click', () => runSearch());
     $('searchInput').addEventListener('keydown', (e) => {
       if (e.key === 'Enter') { e.preventDefault(); runSearch(); }
-      if (e.key === 'Escape') { hideSearchResults(); closeFindPanel({ clearMarker: true }); }
+      if (e.key === 'Escape') {
+        hideSearchResults();
+        setSearchOpen(false);
+        closeFindPanel({ clearMarker: true });
+        $('searchToggle').focus();
+      }
     });
     document.addEventListener('click', (e) => {
       if (!$('controls').contains(e.target)) hideSearchResults();
@@ -2080,6 +2900,12 @@
         activeMoveSpeed = null;
         hideBanner();
       } catch (err) { showBanner('Could not stop: ' + err.message); }
+    });
+    $('leaveNowBtn').addEventListener('click', async () => {
+      try {
+        const out = await postJSON('/trip/leave_now');
+        if (!out.skipped) showBanner('There is no active stop wait to skip.', 'warn');
+      } catch (err) { showBanner('Could not leave now: ' + err.message, 'error'); }
     });
     $('stopBtn').addEventListener('click', async () => {
       try {
@@ -2097,11 +2923,27 @@
 
     // ---- Banners / hint -------------------------------------------------
     // kind: 'error' (red, fatal), 'warn'/'status' (amber advisory), 'action' (amber).
+    // opts.action: { label, onClick } optional recovery button (e.g. reload page).
     let bannerKind = null;
-    function showBanner(msg, kind = 'action') {
+    function showBanner(msg, kind = 'action', opts = {}) {
       const b = $('banner');
-      b.textContent = msg;
-      b.style.display = 'block';
+      b.innerHTML = '';
+      const text = document.createElement('span');
+      text.className = 'bannerMsg';
+      text.textContent = msg;
+      b.appendChild(text);
+      if (opts && opts.action && opts.action.label && typeof opts.action.onClick === 'function') {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'bannerAction';
+        btn.textContent = opts.action.label;
+        btn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          opts.action.onClick();
+        });
+        b.appendChild(btn);
+      }
+      b.style.display = 'flex';
       b.classList.remove('banner-error', 'banner-warn');
       b.classList.add(kind === 'error' ? 'banner-error' : 'banner-warn');
       bannerKind = kind;
@@ -2109,8 +2951,36 @@
     function hideBanner() {
       const b = $('banner');
       b.style.display = 'none';
+      b.innerHTML = '';
       b.classList.remove('banner-error', 'banner-warn');
       bannerKind = null;
+    }
+
+    /** Google Maps key already loaded — page reload clears script context (app stays open). */
+    function showKeySwitchReloadBanner(reason) {
+      const msg =
+        reason ||
+        'A different Google Maps key is already loaded on this page. Reload the page to use the new key.';
+      showBanner(msg, 'error', {
+        action: {
+          label: 'Reload page',
+          onClick: () => {
+            try {
+              window.location.reload();
+            } catch (e) {
+              // Extremely rare; fall back to navigation to same URL.
+              window.location.href = window.location.href;
+            }
+          }
+        }
+      });
+    }
+
+    function isKeySwitchReloadError(result) {
+      if (!result) return false;
+      if (result.code === 'KEY_SWITCH_RELOAD') return true;
+      const r = String(result.reason || '');
+      return /different Google Maps key is already loaded/i.test(r);
     }
 
     function updateHint() {
@@ -2187,6 +3057,28 @@
       }
     });
 
+    // Compact header summary: diagnostics stay available without competing
+    // with the primary map controls. Escape and outside-click both close it.
+    function setDeviceDetailsOpen(open) {
+      const panel = $('deviceDetails');
+      const button = $('deviceSummary');
+      if (!panel || !button) return;
+      panel.classList.toggle('open', !!open);
+      button.setAttribute('aria-expanded', open ? 'true' : 'false');
+    }
+    $('deviceSummary').addEventListener('click', (e) => {
+      e.stopPropagation();
+      setDeviceDetailsOpen(!$('deviceDetails').classList.contains('open'));
+    });
+    $('deviceDetails').addEventListener('click', (e) => e.stopPropagation());
+    document.addEventListener('click', () => setDeviceDetailsOpen(false));
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && $('deviceDetails').classList.contains('open')) {
+        setDeviceDetailsOpen(false);
+        $('deviceSummary').focus();
+      }
+    });
+
     // ---- Status polling -------------------------------------------------
     let engineFatal = false;
     function renderStatus(s) {
@@ -2210,27 +3102,28 @@
       // When the phone link is dead, don't show a green "connected" chip.
       if (dev && !linkLost) {
         $('deviceName').textContent = dev.name || 'iPhone';
-        $('iosVersion').textContent = dev.ios_version ? ('· iOS ' + dev.ios_version) : '';
+        $('iosVersion').textContent = dev.ios_version || '—';
         $('devMode').textContent = dev.developer_mode === true ? 'on' : dev.developer_mode === false ? 'off' : 'unknown';
         $('deviceDot').className = 'dot ' + (dev.trusted ? 'ok' : 'warn');
       } else if (dev && linkLost) {
         $('deviceName').textContent = 'disconnected';
-        $('iosVersion').textContent = dev.name ? ('· was ' + dev.name) : '';
+        $('iosVersion').textContent = dev.ios_version || '—';
         $('devMode').textContent = '—';
         $('deviceDot').className = 'dot err';
       } else if (s.state === 'awaiting_confirm' && s.pending_device) {
         $('deviceName').textContent = s.pending_device.name || 'iPhone';
-        $('iosVersion').textContent = s.pending_device.ios_version ? ('· iOS ' + s.pending_device.ios_version) : '';
+        $('iosVersion').textContent = s.pending_device.ios_version || '—';
         $('devMode').textContent = '—';
         $('deviceDot').className = 'dot warn';
       } else if (s.state === 'waiting_for_device') {
         $('deviceName').textContent = 'waiting for iPhone';
-        $('iosVersion').textContent = '';
+        $('iosVersion').textContent = '—';
         $('devMode').textContent = '—';
         $('deviceDot').className = 'dot';
       } else {
         $('deviceName').textContent = 'not connected';
-        $('iosVersion').textContent = '';
+        $('iosVersion').textContent = '—';
+        $('devMode').textContent = '—';
         $('deviceDot').className = 'dot err';
       }
 
@@ -2250,6 +3143,21 @@
       } else {
         $('spoofState').textContent = 'not spoofing';
       }
+
+      // One calm, useful line in the closed header. Full diagnostics remain
+      // in the device-details popover above.
+      let deviceSummaryState = 'Checking connection';
+      if (linkLost || engineFatal) deviceSummaryState = 'Connection lost';
+      else if (s.state === 'waiting_for_device') deviceSummaryState = 'Connect an iPhone';
+      else if (s.state === 'awaiting_confirm') deviceSummaryState = 'Confirmation required';
+      else if (s.state === 'reconnecting') deviceSummaryState = 'Reconnecting';
+      else if (dev && dev.developer_mode === false) deviceSummaryState = 'Developer Mode required';
+      else if (dev && !dev.trusted) deviceSummaryState = 'Trust required';
+      else if (s.target && moving) deviceSummaryState = 'Trip in progress';
+      else if (s.target && applied) deviceSummaryState = 'Holding location';
+      else if (s.target) deviceSummaryState = 'Location pending';
+      else if (dev) deviceSummaryState = 'Ready';
+      $('deviceSummaryState').textContent = deviceSummaryState;
 
       // Fatal engine errors stay visible; long reconnect escalates the message.
       let statusMsg = null;
@@ -2298,17 +3206,22 @@
 
       if (moving) {
         // Don't clear a search preview marker while moving unless panels conflict.
-        $('goPanel').style.display = 'none';
+        setFloatPanel('goPanel', false);
         pendingRoute = null;
-        $('findPanel').style.display = 'none';
+        setFloatPanel('findPanel', false);
         foundPlace = null;
         const m = s.movement || {};
         const trip = s.trip;
         const pct = m.total ? Math.min(100, Math.round((m.index / m.total) * 100)) : 0;
         let movingWord;
         if (trip && trip.legs) {
-          const legKind = trip.kind === 'fly' ? 'Flying' : 'Driving';
-          movingWord = `Trip ${trip.leg || '?'}/${trip.legs} · ${legKind}`;
+          if (trip.phase === 'waiting') {
+            const remaining = Math.max(0, Number(trip.wait_remaining_seconds) || 0);
+            movingWord = `Stop ${trip.leg || '?'}/${trip.legs} · Leaving in ${formatDuration(remaining)}`;
+          } else {
+            const legKind = trip.kind === 'fly' ? 'Flying' : 'Driving';
+            movingWord = `Trip ${trip.leg || '?'}/${trip.legs} · ${legKind}`;
+          }
         } else {
           const speedKey = activeMoveSpeed || (m.kind === 'fly' ? 'fly' : routeSpeed);
           const speedLabel = SPEED_LABELS[speedKey] || 'Route';
@@ -2316,10 +3229,12 @@
         }
         const suffix = (!applied || engineFatal) ? ' · not on phone' : '';
         $('moveLabel').innerHTML = `<b>${escapeHtml(movingWord)}</b> · ${pct}%${escapeHtml(suffix)}`;
-        $('moveBar').style.display = 'flex';
+        $('leaveNowBtn').style.display = trip && trip.phase === 'waiting' ? '' : 'none';
+        setFloatPanel('moveBar', true, 'flex');
         renderTripList();
       } else {
-        $('moveBar').style.display = 'none';
+        $('leaveNowBtn').style.display = 'none';
+        setFloatPanel('moveBar', false);
         if (wasMoving) {
           clearRouteLine();
           removeLine('tripPath');
@@ -2336,7 +3251,11 @@
 
     async function poll() {
       try { renderStatus(await (await fetch('/status')).json()); }
-      catch (err) { $('deviceName').textContent = 'backend unreachable'; $('deviceDot').className = 'dot err'; }
+      catch (err) {
+        $('deviceName').textContent = 'M Maps unavailable';
+        $('deviceSummaryState').textContent = 'Backend unreachable';
+        $('deviceDot').className = 'dot err';
+      }
     }
     poll();
     setInterval(poll, 1000);

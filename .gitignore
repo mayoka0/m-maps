@@ -16,6 +16,13 @@ Claude.md
 BUGS.md
 BUGS2.md
 
+# Local user secrets / config — never commit API keys
+.mmaps/
+*.local.json
+config.local.json
+google-maps-key*
+**/google-maps-api-key*
+
 .pytest_cache/
 .coverage
 coverage.xml

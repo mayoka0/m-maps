@@ -1,6 +1,18 @@
 """Offline tests for multi-stop dwell timing (no phone or tunnel)."""
 import asyncio
+import sys
 import time
+
+import pytest
+
+# SpoofSession imports the macOS device stack, which depends on the Unix-only
+# ``pwd`` module. Keep Windows CI useful for the pure cross-platform tests while
+# skipping this macOS session test before collection reaches that import.
+if sys.platform == "win32":
+    pytest.skip(
+        "session dwell tests require the macOS/Unix device stack",
+        allow_module_level=True,
+    )
 
 from mmaps.session import SpoofSession
 

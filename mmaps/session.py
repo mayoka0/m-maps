@@ -67,6 +67,10 @@ class SpoofSession:
         self._trip_task: Optional[asyncio.Task] = None
         self._trip_leg: int = 0       # 1-based current leg (0 = not on a trip)
         self._trip_legs: int = 0      # total legs
+        # Optional dwell between multi-stop legs.  The hold loop continues to
+        # assert the arrival coordinate while this timer runs.
+        self._trip_wait_until: Optional[float] = None
+        self._trip_wait_event = asyncio.Event()
 
     # -- lifecycle ---------------------------------------------------------
 
@@ -213,6 +217,8 @@ class SpoofSession:
         self._trip_task = None
         self._trip_leg = 0
         self._trip_legs = 0
+        self._trip_wait_until = None
+        self._trip_wait_event.set()
         if task is not None and not task.done():
             task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
@@ -230,6 +236,8 @@ class SpoofSession:
             return
         self._trip_legs = len(legs)
         self._trip_leg = 0
+        self._trip_wait_until = None
+        self._trip_wait_event = asyncio.Event()
         self._trip_task = asyncio.create_task(self._run_trip(legs))
 
     async def _run_trip(self, legs: List[Dict[str, Any]]) -> None:
@@ -257,6 +265,11 @@ class SpoofSession:
                 move = self._move_task
                 if move is not None:
                     await move
+                # A wait is useful only when another leg follows.  At the last
+                # stop the normal hold behavior already lasts until Stop.
+                wait_seconds = max(0.0, float(leg.get("wait_seconds") or 0.0))
+                if i < len(legs) and wait_seconds > 0:
+                    await self._wait_at_stop(wait_seconds)
         except asyncio.CancelledError:
             raise
         finally:
@@ -265,6 +278,25 @@ class SpoofSession:
                 self._trip_task = None
                 self._trip_leg = 0
                 self._trip_legs = 0
+                self._trip_wait_until = None
+
+    async def _wait_at_stop(self, seconds: float) -> None:
+        """Hold at a trip stop until its dwell expires or Leave now is used."""
+        self._trip_wait_event.clear()
+        self._trip_wait_until = time.monotonic() + seconds
+        try:
+            with contextlib.suppress(asyncio.TimeoutError):
+                await asyncio.wait_for(self._trip_wait_event.wait(), timeout=seconds)
+        finally:
+            self._trip_wait_until = None
+            self._trip_wait_event.clear()
+
+    async def leave_now(self) -> bool:
+        """Skip the active between-leg wait. Return whether a wait was active."""
+        if self._trip_wait_until is None:
+            return False
+        self._trip_wait_event.set()
+        return True
 
     async def _move(self, points, tick_seconds) -> None:
         # Deadline-based sleep keeps pace even if set_target is briefly slow
@@ -396,6 +428,7 @@ class SpoofSession:
             target = {"lat": self._target[0], "lon": self._target[1]}
         moving = self._is_moving
         on_trip = self._is_on_trip
+        waiting = on_trip and self._trip_wait_until is not None
         if on_trip:
             state = "trip"
         elif moving:
@@ -408,6 +441,10 @@ class SpoofSession:
                 "leg": self._trip_leg,
                 "legs": self._trip_legs,
                 "kind": self._move_kind,
+                "phase": "waiting" if waiting else "moving",
+                "wait_remaining_seconds": max(
+                    0, round(self._trip_wait_until - time.monotonic())
+                ) if waiting else None,
             }
 
         reconnect_seconds = None

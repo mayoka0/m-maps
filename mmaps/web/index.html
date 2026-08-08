@@ -686,23 +686,35 @@
       position: relative; z-index: 90; flex-shrink: 0;
     }
     #lanBanner b { color: #fff; font-weight: 650; }
-    /* Device-confirm prompt: same visual weight as color-coded banners. */
+    /* Device confirmation is a blocking consent step. Keep it above every
+       map/header/popover layer so the action can never be hidden behind the
+       translucent command bar or a status banner. */
     #devicePrompt {
-      display: none; padding: 10px 16px;
-      background: rgba(109, 124, 255, 0.18);
-      border-bottom: 1px solid rgba(109, 124, 255, 0.4);
-      position: relative; z-index: 90; flex-shrink: 0;
+      display: none; position: fixed; inset: 0; z-index: 1000;
+      padding: 24px;
+      align-items: center; justify-content: center;
+      background: rgba(5, 8, 16, 0.62);
+      -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
     }
     #devicePrompt .devicePromptInner {
-      display: flex; align-items: flex-start; gap: 12px;
+      display: flex; align-items: flex-start; gap: 14px;
+      width: min(420px, calc(100vw - 32px)); padding: 18px;
+      background: var(--panel-solid);
+      border: 1px solid var(--glass-border-strong);
+      border-radius: var(--radius-lg);
+      box-shadow: 0 24px 80px rgba(0, 0, 0, 0.48), inset 0 1px 0 rgba(255,255,255,0.08);
     }
     #devicePrompt .devicePromptIcon {
       flex-shrink: 0; width: 10px; height: 10px; margin-top: 5px; border-radius: 50%;
       background: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft);
     }
     #devicePrompt .devicePromptBody { flex: 1; min-width: 0; }
+    #devicePrompt .devicePromptTitle {
+      color: var(--text); font-size: 15px; font-weight: 700; line-height: 1.25;
+      margin-bottom: 5px;
+    }
     #devicePrompt #devicePromptText {
-      font-size: 13px; color: var(--text); line-height: 1.4; margin-bottom: 8px;
+      font-size: 14px; color: var(--text); line-height: 1.45; margin-bottom: 14px;
     }
     #devicePrompt .devicePromptActions { display: flex; gap: 8px; flex-wrap: wrap; }
     #banner {
@@ -1063,10 +1075,11 @@
     <button type="button" class="updateDismiss" id="updateDismissBtn">Dismiss</button>
   </div>
   <div id="banner"></div>
-  <div id="devicePrompt">
+  <div id="devicePrompt" role="dialog" aria-modal="true" aria-labelledby="devicePromptTitle" aria-describedby="devicePromptText">
     <div class="devicePromptInner">
       <span class="devicePromptIcon" aria-hidden="true"></span>
       <div class="devicePromptBody">
+        <div id="devicePromptTitle" class="devicePromptTitle">Confirm iPhone</div>
         <div id="devicePromptText"></div>
         <div class="devicePromptActions">
           <button type="button" id="deviceConfirmBtn" class="primary">Use this device</button>
@@ -3018,12 +3031,15 @@
     // ---- Device confirm (live plug-in) ----------------------------------
     let pendingDeviceUdid = null;
     function showDevicePrompt(pending) {
+      const prompt = $('devicePrompt');
       if (!pending) {
-        $('devicePrompt').style.display = 'none';
+        prompt.style.display = 'none';
         pendingDeviceUdid = null;
         return;
       }
-      pendingDeviceUdid = pending.udid || null;
+      const nextUdid = pending.udid || null;
+      const isNewPrompt = prompt.style.display !== 'flex' || nextUdid !== pendingDeviceUdid;
+      pendingDeviceUdid = nextUdid;
       // Wording only — do not fetch real name/iOS here (that would open a
       // second lockdown connection and race the hold loop).
       const name = pending.name || '';
@@ -3035,7 +3051,12 @@
         $('devicePromptText').textContent =
           'An iPhone was detected on USB. Use it for location spoofing?';
       }
-      $('devicePrompt').style.display = 'block';
+      prompt.style.display = 'flex';
+      if (isNewPrompt) {
+        setDeviceDetailsOpen(false);
+        closeSettingsPanel();
+        requestAnimationFrame(() => $('deviceConfirmBtn').focus());
+      }
     }
     $('deviceConfirmBtn').addEventListener('click', async () => {
       try {

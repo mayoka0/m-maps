@@ -41,6 +41,18 @@ def test_header_stacks_above_controls_for_device_popover():
     assert "z-index: 100" in html[controls_start:controls_end]
 
 
+def test_device_confirmation_is_a_foreground_modal():
+    html = (WEB_DIR / "index.html").read_text(encoding="utf-8")
+    prompt_start = html.index("#devicePrompt {")
+    prompt_end = html.index("}", prompt_start)
+    prompt_css = html[prompt_start:prompt_end]
+    assert "position: fixed" in prompt_css
+    assert "z-index: 1000" in prompt_css
+    assert 'role="dialog"' in html
+    assert 'aria-modal="true"' in html
+    assert "prompt.style.display = 'flex'" in html
+
+
 def test_search_is_collapsed_and_explicit_submit_only():
     html = (WEB_DIR / "index.html").read_text(encoding="utf-8")
     assert 'id="searchToggle"' in html

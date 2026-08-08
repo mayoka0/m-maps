@@ -86,6 +86,8 @@ duration through the API, but there is not yet a finished trip-duration/arrival-
 
 Fly has no draw-path mode. Standalone and multi-stop fly legs snap their destination to the
 nearest bundled medium/large passenger airport when one exists.
+Flight overlays are UI-only drawing paths; device movement still follows the session's generated
+flight points, so keep overlay rendering and device motion in sync when changing fly behavior.
 
 For automatic multi-stop planning, `mmaps/trip.py` chooses Fly when OSRM has no route or the
 great-circle distance is at least 1,000 km; otherwise it chooses Drive. This threshold applies to
@@ -351,8 +353,6 @@ process termination breaks active playback and the DVT connection.
 
 ## 7. Known issues and deliberate limitations
 
-- Antimeridian overlay: a great-circle flight crossing ±180° can be drawn across the long side of
-  a flat map. Device points still take the correct short route; this is cosmetic.
 - Road centerlines differ among OSRM/OpenStreetMap, Google, and Apple. The emitted point remains on
   OSRM's route, but another provider can visually place that coordinate a few metres beside its
   own road drawing.

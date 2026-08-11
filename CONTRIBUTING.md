@@ -150,6 +150,13 @@ Useful labels when filing or hunting work:
 - **No drive-by refactors** unless they're needed for the fix.
 - **Readable code** — this project is open source so people can see exactly what
   runs on their phone. Prefer clear names and short comments over cleverness.
+## Security and local configuration
+
+Never commit real API keys, access tokens, passwords, or other credentials
+to the repository.
+
+Use local environment files such as `.env` for sensitive configuration and
+keep them out of version control.
 
 ## Reporting bugs and ideas
 

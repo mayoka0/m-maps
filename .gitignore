@@ -27,3 +27,7 @@ google-maps-key*
 .coverage
 coverage.xml
 htmlcov/
+# Local environment files
+.env
+.env.*
+!.env.example

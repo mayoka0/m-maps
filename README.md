@@ -1,5 +1,8 @@
 # M Maps
 
+
+[![codecov](https://codecov.io/gh/mayoka0/m-maps/graph/badge.svg)](https://codecov.io/gh/mayoka0/m-maps)
+
 A macOS tool that spoofs the GPS location an iPhone reports, over a USB connection.
 
 **An open-source project by [Mayoka Labs](https://github.com/Mayoka-Labs)**
@@ -129,3 +132,13 @@ Color variants of the app mark live under `assets/logo/` (SVG + PNG). The
 shipping app icon is built from `mayoka-black.svg` into `assets/icon/AppIcon.icns`
 (`scripts/make_app_icon.py`). Other colors are reserved for a future in-app
 picker and are not wired into the `.app` yet.
+
+## Code Coverage
+
+
+Coverage is uploaded automatically by the [CI workflow](.github/workflows/ci.yml).
+
+
+For public repositories, Codecov can upload coverage without a token.
+Protected-branch uploads or private forks may require a `CODECOV_TOKEN`
+secret; token authentication can be disabled if appropriate.

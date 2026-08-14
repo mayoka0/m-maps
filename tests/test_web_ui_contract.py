@@ -69,6 +69,21 @@ def test_controls_live_inside_the_floating_header():
     assert 'id="stopBtn"' in header
 
 
+def test_destination_confirmations_have_keyboard_and_screen_reader_behavior():
+    html = (WEB_DIR / "index.html").read_text(encoding="utf-8")
+    assert 'id="findPanel" class="floatCenter" role="dialog" aria-modal="true"' in html
+    assert 'aria-labelledby="findTitle" tabindex="-1"' in html
+    assert 'id="goPanel" class="floatCenter" role="dialog" aria-modal="true"' in html
+    assert 'aria-labelledby="goTitle" tabindex="-1"' in html
+    assert 'id="findTitle" aria-live="polite"' in html
+    assert 'id="goTitle" aria-live="polite"' in html
+    assert "panel.__mmapsReturnFocus" in html
+    assert "const first = Array.from(panel.querySelectorAll(" in html
+    assert "Confirmation panels are modal for keyboard navigation" in html
+    assert "if (e.key === 'Escape')" in html
+    assert "if (e.shiftKey && document.activeElement === first)" in html
+
+
 def test_trip_status_poll_does_not_replace_open_wait_selector():
     html = (WEB_DIR / "index.html").read_text(encoding="utf-8")
     assert "let tripListRenderKey = null" in html

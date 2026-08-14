@@ -1096,16 +1096,18 @@
     <!-- Overlays are direct children (no full-screen hit-layer wrapper). -->
     <div id="hint" class="floatCenter"></div>
     <!-- Search / coordinate find: show only, never moves until Move here -->
-    <div id="findPanel" class="floatCenter">
-      <div class="title" id="findTitle"></div>
+    <div id="findPanel" class="floatCenter" role="dialog" aria-modal="true"
+         aria-labelledby="findTitle" tabindex="-1">
+      <div class="title" id="findTitle" aria-live="polite"></div>
       <div class="actions">
         <button id="moveHereBtn" class="primary" type="button">Move here</button>
         <button id="findCancelBtn" class="ghost" type="button">Cancel</button>
       </div>
     </div>
     <!-- Map-click route confirm (destination already chosen on the map) -->
-    <div id="goPanel" class="floatCenter">
-      <div class="title" id="goTitle"></div>
+    <div id="goPanel" class="floatCenter" role="dialog" aria-modal="true"
+         aria-labelledby="goTitle" tabindex="-1">
+      <div class="title" id="goTitle" aria-live="polite"></div>
       <div class="durationRow" id="durationRow" style="display:none">
         <label for="durationInput">Duration</label>
         <input id="durationInput" type="text" inputmode="text" autocomplete="off"
@@ -1377,7 +1379,32 @@
     }
 
     function setFloatPanel(id, open, displayWhenOpen) {
+      const panel = $(id);
+      if (!panel) return;
+      if (open && !anyPanelOpen()) {
+        // Keep the exact control that opened the confirmation so keyboard and
+        // VoiceOver users return to the same place after cancelling it.
+        panel.__mmapsReturnFocus = document.activeElement instanceof HTMLElement
+          ? document.activeElement
+          : null;
+      }
       MMapsChrome.setPanel(id, open, displayWhenOpen);
+      if (open) {
+        requestAnimationFrame(() => {
+          if (!isFloatPanelOpen(id)) return;
+          const first = Array.from(panel.querySelectorAll(
+            'button:not([disabled]), input:not([disabled]), select:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])'
+          )).find((el) => {
+            const style = window.getComputedStyle(el);
+            return style.display !== 'none' && style.visibility !== 'hidden';
+          });
+          (first || panel).focus();
+        });
+      } else if (!anyPanelOpen()) {
+        const returnFocus = panel.__mmapsReturnFocus;
+        panel.__mmapsReturnFocus = null;
+        if (returnFocus && document.contains(returnFocus)) returnFocus.focus();
+      }
     }
     function isFloatPanelOpen(id) {
       return MMapsChrome.isPanelOpen(id);
@@ -2761,6 +2788,42 @@
         clearDestMarker();
       }
       updateHint();
+    });
+
+    // Confirmation panels are modal for keyboard navigation as well as mouse
+    // users. Keep Tab inside the active card and make Escape cancel it.
+    document.addEventListener('keydown', (e) => {
+      const panelId = isFloatPanelOpen('findPanel') ? 'findPanel'
+        : isFloatPanelOpen('goPanel') ? 'goPanel' : null;
+      if (!panelId) return;
+      const panel = $(panelId);
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        if (panelId === 'findPanel') closeFindPanel({ clearMarker: true });
+        else closeGoPanel({ clearMarker: true, clearLine: true });
+        return;
+      }
+      if (e.key !== 'Tab') return;
+      const focusable = Array.from(panel.querySelectorAll(
+        'button:not([disabled]), input:not([disabled]), select:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])'
+      )).filter((el) => {
+        const style = window.getComputedStyle(el);
+        return style.display !== 'none' && style.visibility !== 'hidden';
+      });
+      if (!focusable.length) {
+        e.preventDefault();
+        panel.focus();
+        return;
+      }
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault();
+        first.focus();
+      }
     });
 
     // ---- Search ---------------------------------------------------------

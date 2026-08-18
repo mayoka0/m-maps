@@ -96,7 +96,7 @@ def test_flight_duration_override():
 def test_release_version_and_beta_helper():
     from mmaps import __version__, is_beta_version
 
-    assert __version__ == "1.0.5"
+    assert __version__ == "1.0.6"
     assert not is_beta_version()
     assert is_beta_version("1.0.5-beta.2")
     assert not is_beta_version("1.0.3")

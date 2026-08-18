@@ -19,7 +19,7 @@ evade tracking.
   Android 16) using USB debugging plus the M Maps Companion mock-location app.
 - Development machine: Apple Silicon macOS with Xcode Command Line Tools; do not assume Homebrew
   or full Xcode.
-- Current release version: `1.0.5` in `mmaps/__init__.py`. Do not bump it automatically.
+- Current release version: `1.0.6` in `mmaps/__init__.py` for the cross-platform release.
 - Default server exposure: `127.0.0.1:8765`. Optional `--lan` binds only to a specific private
   LAN IPv4 address, never `0.0.0.0`.
 - Privacy: M Maps has no telemetry and collects no user data. The Python process talks to the

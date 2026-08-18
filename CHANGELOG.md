@@ -3,6 +3,21 @@
 All notable changes to M Maps are listed here. Version numbers match GitHub release tags.
 Unreleased develop builds use `X.Y.Z-beta.N` (not tagged as public releases).
 
+## [1.0.6] - 2026-08-18
+
+### Cross-platform device support
+
+- Added the Android Companion app and ADB transport for mock-location control.
+- Added automatic iPhone and Android discovery with one active device at a time.
+- Added reconnect handling and acknowledgement checks for Android commands.
+- Reused the shared movement engine for Android Teleport, Route, Fly, and Multi-stop trips.
+
+### Reliability and interface
+
+- Improved device confirmation, connection recovery, route timing, and movement status reporting.
+- Added route and Android integration coverage to the offline test suite.
+- Updated project documentation, contributor guidance, and Codecov reporting.
+
 ## [1.0.5] - 2026-08-07
 
 ### Device confirmation

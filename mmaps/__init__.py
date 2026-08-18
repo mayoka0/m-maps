@@ -4,8 +4,8 @@ from typing import Optional
 
 # Public releases use clean X.Y.Z versions matching GitHub tags.
 # Develop builds may use X.Y.Z-beta.N, but only when MJ explicitly chooses a
-# version checkpoint. 1.0.5 ships the foreground device-confirmation fix.
-__version__ = "1.0.5"
+# version checkpoint. 1.0.6 ships the cross-platform device support release.
+__version__ = "1.0.6"
 
 
 def is_beta_version(version: Optional[str] = None) -> bool:

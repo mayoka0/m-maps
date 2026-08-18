@@ -4,6 +4,8 @@ M Maps is an open-source desktop tool for setting a connected phone's simulated
 GPS location over USB. It supports iPhone through `pymobiledevice3` and Android
 through the M Maps Companion app and ADB.
 
+[![codecov](https://codecov.io/gh/mayoka0/m-maps/graph/badge.svg)](https://codecov.io/gh/mayoka0/m-maps)
+
 Use M Maps for educational purposes only.
 
 ## What it does
@@ -249,3 +251,18 @@ it is tested and explicitly approved for release. See
 ## License
 
 See [`LICENSE`](LICENSE).
+
+Color variants of the app mark live under `assets/logo/` (SVG + PNG). The
+shipping app icon is built from `mayoka-black.svg` into `assets/icon/AppIcon.icns`
+(`scripts/make_app_icon.py`). Other colors are reserved for a future in-app
+picker and are not wired into the `.app` yet.
+
+## Code Coverage
+
+
+Coverage is uploaded automatically by the [CI workflow](.github/workflows/ci.yml).
+
+
+For public repositories, Codecov can upload coverage without a token.
+Protected-branch uploads or private forks may require a `CODECOV_TOKEN`
+secret; token authentication can be disabled if appropriate.

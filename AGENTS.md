@@ -128,6 +128,8 @@ duration through the API, but there is not yet a finished trip-duration/arrival-
 
 Fly has no draw-path mode. Standalone and multi-stop fly legs snap their destination to the
 nearest bundled medium/large passenger airport when one exists.
+Flight overlays are UI-only drawing paths; device movement still follows the session's generated
+flight points, so keep overlay rendering and device motion in sync when changing fly behavior.
 
 For automatic multi-stop planning, `mmaps/trip.py` chooses Fly when Valhalla has no auto route or the
 great-circle distance is at least 1,000 km; otherwise it chooses Drive. This threshold applies to

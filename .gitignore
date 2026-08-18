@@ -28,9 +28,13 @@ google-maps-key*
 .coverage
 coverage.xml
 htmlcov/
-
 # Android Studio / Gradle machine-local files and build output
 android-companion/.gradle/
 android-companion/.idea/
 android-companion/local.properties
 android-companion/**/build/
+
+# Local environment files
+.env
+.env.*
+!.env.example

@@ -1,7 +1,7 @@
 """Nearest-airport lookup from a bundled OurAirports extract.
 
 The CSV in ``mmaps/data/airports.csv`` is filtered offline from the public
-OurAirports dataset to medium/large airports with scheduled service — real
+OurAirports dataset to medium/large airports with scheduled service - real
 passenger airports, not tiny strips or heliports. Lookup is pure distance
 (haversine); no network calls.
 """

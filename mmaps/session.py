@@ -5,11 +5,11 @@ owns exactly one tunnel + one `hold_location` loop for the whole session
 (started eagerly so the tunnel is up before the first click), plus a single
 mutable "current target". The API just calls `set_target()` / `stop()`; the
 already-running loop reads the target on its next tick (or immediately, via
-the wake event) — no tunnel restart per click.
+the wake event) - no tunnel restart per click.
 
 Drive and fly reuse this exactly: a background task walks a resampled path and
 calls `set_target()` with the next point every tick. One tunnel, one hold loop
-— the target just moves on its own.
+- the target just moves on its own.
 """
 import asyncio
 import contextlib
@@ -38,7 +38,7 @@ class SpoofSession:
         self._target: Optional[Tuple[float, float]] = None
         # Device facts (name/iOS/trust/Developer Mode), read once and cached.
         # These don't change during a serve session, and reading Developer Mode
-        # hits lockdownd — which the hold loop also uses to build the tunnel, on
+        # hits lockdownd - which the hold loop also uses to build the tunnel, on
         # the SAME connection. Polling it every second could interleave with a
         # reconnect and corrupt that connection, so we snapshot it up front.
         self._device_info: Optional[dict] = None
@@ -49,7 +49,7 @@ class SpoofSession:
         self._error: Optional[str] = None
         # True only after a successful DVT location_simulation.set() for the
         # current connection. Cleared on connection_lost. Used for API
-        # ``applied`` — not engine_live (task existence alone is not enough).
+        # ``applied`` - not engine_live (task existence alone is not enough).
         self._assert_live = False
         # monotonic timestamp when the current reconnect streak began, or None.
         self._reconnect_since: Optional[float] = None
@@ -106,7 +106,7 @@ class SpoofSession:
                 on_event=self._on_event,
                 wake_event=self._wake_event,
             )
-            # Clean exit (stop requested) — leave state as set by stop().
+            # Clean exit (stop requested) - leave state as set by stop().
             if self._state != self.STOPPED:
                 self._state = self.STOPPED
                 self._error = None
@@ -155,7 +155,7 @@ class SpoofSession:
         self._task = None
         self._assert_live = False
         self._reconnect_since = None
-        # Intentional stop — don't keep advertising a dead link after restore GPS.
+        # Intentional stop - don't keep advertising a dead link after restore GPS.
         self._link_lost_sticky = False
         self._state = self.STOPPED
         self._error = None  # never leave a stale error after a clean stop
@@ -198,6 +198,24 @@ class SpoofSession:
         self._move_total = len(points)
         self._move_index = 0
         self._move_task = asyncio.create_task(self._move(points, tick_seconds))
+        # A standalone movement task has no caller awaiting it. Consume its
+        # exception and surface a stable fatal state instead of silently
+        # stopping with an asyncio traceback in the server log.
+        self._move_task.add_done_callback(self._movement_done)
+
+    def _movement_done(self, task: asyncio.Task) -> None:
+        if task.cancelled():
+            return
+        try:
+            error = task.exception()
+        except asyncio.CancelledError:
+            return
+        if error is None:
+            return
+        self._assert_live = False
+        self._state = self.ERROR
+        self._error = humanize_error(error)
+        self._move_kind = None
 
     async def stop_movement(self) -> None:
         """Stop moving (and any multi-stop trip) but keep holding the current point."""
@@ -229,7 +247,7 @@ class SpoofSession:
 
         Each leg is ``{"kind": "drive"|"fly", "coordinates"|"waypoints": ...}``
         in the same shape as POST /drive and POST /fly. One tunnel, one hold
-        loop — only the movement task is swapped per leg.
+        loop - only the movement task is swapped per leg.
         """
         await self.stop_movement()
         if not legs:
@@ -249,7 +267,11 @@ class SpoofSession:
                     coords = leg.get("coordinates") or []
                     if len(coords) < 2:
                         continue
-                    points = route.resample_by_speed(coords, route.MODE_SPEEDS_KMH["car"])
+                    timing = leg.get("timing_sections") or []
+                    if timing:
+                        points = route.resample_by_timing(coords, timing)
+                    else:
+                        points = route.resample_by_speed(coords, route.MODE_SPEEDS_KMH["car"])
                     tick = route.TICK_SECONDS
                 elif kind == "fly":
                     waypoints = leg.get("waypoints") or []
@@ -272,8 +294,12 @@ class SpoofSession:
                     await self._wait_at_stop(wait_seconds)
         except asyncio.CancelledError:
             raise
+        except Exception as error:
+            self._assert_live = False
+            self._state = self.ERROR
+            self._error = humanize_error(error)
         finally:
-            # Trip finished or cancelled — clear trip fields; hold stays on last point.
+            # Trip finished or cancelled - clear trip fields; hold stays on last point.
             if self._trip_task is asyncio.current_task():
                 self._trip_task = None
                 self._trip_leg = 0
@@ -310,7 +336,7 @@ class SpoofSession:
             if delay > 0:
                 await asyncio.sleep(delay)
             else:
-                # We're behind — catch up without sleeping (don't pile lag).
+                # We're behind - catch up without sleeping (don't pile lag).
                 next_deadline = time.monotonic()
 
     @property
@@ -330,7 +356,7 @@ class SpoofSession:
     def applied(self) -> bool:
         """True only after a real successful DVT set() on the current link.
 
-        Do not treat "task exists" as success — that is true while RECONNECTING
+        Do not treat "task exists" as success - that is true while RECONNECTING
         with no phone attached.
         """
         return bool(self._assert_live and self.engine_live)
@@ -352,7 +378,7 @@ class SpoofSession:
             return True
         if self._state == self.ERROR:
             return False
-        # Already been reconnecting a while — do not pretend success.
+        # Already been reconnecting a while - do not pretend success.
         if self._state == self.RECONNECTING and self._reconnect_since is not None:
             if (time.monotonic() - self._reconnect_since) >= 1.0:
                 return False
@@ -396,7 +422,7 @@ class SpoofSession:
     async def status(self) -> dict:
         """A JSON-serializable snapshot for the /status endpoint.
 
-        Uses the cached device snapshot (see __init__) — no lockdown I/O here,
+        Uses the cached device snapshot (see __init__) - no lockdown I/O here,
         so polling never races with the hold loop's use of that connection.
         When the engine is dead (error) or reconnect has gone stale, device
         chips should not look "ok".

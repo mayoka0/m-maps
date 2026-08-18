@@ -1,24 +1,25 @@
-"""Turning a road-route polyline into a stream of timed points to drive.
+"""Turning a routed polyline into a stream of timed movement points.
 
-Pure functions, no I/O — easy to unit-test. The map GUI fetches the actual
-road route from a routing service (OSRM) in the browser; the coordinates land
+Pure functions, no I/O - easy to unit-test. The map GUI fetches the actual
+route from a routing service in the browser; the coordinates land
 here and are resampled with a **variable speed profile** (cosine ease at
 start/end and through sharp turns) into one point per movement tick. The
 session feeds those points to ``set_target`` on a timer.
 
-Road accuracy is the first priority: production playback follows OSRM's
+Route accuracy is the first priority: production playback follows the router's
 polyline exactly.  Do not spline the route by default.  An unconstrained
 Catmull-Rom curve can leave the source polyline by several metres at sharp or
 uneven junctions, which is enough to put Find My on a nearby wrong road before
-the curve returns.  Natural motion comes from speed easing; OSRM's full
+the curve returns. Natural motion comes from speed easing; the full
 geometry already describes the road's curves.
 
-The DVT location protocol only accepts lat/lon — all natural-looking motion
+The DVT location protocol only accepts lat/lon - all natural-looking motion
 comes from this coordinate sequence and its timing (not speed/heading fields).
 
-Speed presets (walk / bicycle / motorcycle / car) are the same road route at
-different cruise km/h. Fly is NOT here: planes use ``mmaps.flight``
-(great-circle).
+Walking, bicycle, motorcycle, and car geometry comes from distinct routing
+profiles. When the planner supplies per-section travel times, playback follows
+those times so a highway is faster than a local street. The fixed presets
+remain as a backwards-compatible fallback for API callers without timing data.
 """
 from __future__ import annotations
 
@@ -26,7 +27,7 @@ import math
 import random
 from typing import Callable, List, Optional, Sequence, Tuple
 
-# Road speed presets in km/h — real-world averages for prank believability.
+# Road speed presets in km/h - real-world averages for prank believability.
 # Duration ≈ path_length / speed (no time-compression), plus mild ease overhead.
 # Fly is NOT here: planes use POST /fly (great-circle).
 #
@@ -35,7 +36,7 @@ from typing import Callable, List, Optional, Sequence, Tuple
 #   Car Detroit→Ann Arbor ~60 km @ 60 km/h → ~1 h (mixed; pure highway ~45 min)
 MODE_SPEEDS_KMH = {
     "walk": 5.0,         # pedestrian stroll
-    "bicycle": 16.0,     # casual cycling (15–18 km/h band)
+    "bicycle": 16.0,     # casual cycling (15-18 km/h band)
     "motorcycle": 55.0,  # mixed city/highway pace, not top speed
     "car": 60.0,         # mixed driving average (not highway-only cruise)
 }
@@ -45,7 +46,7 @@ SPEED_PRESET_ORDER = ("walk", "bicycle", "motorcycle", "car")
 DEFAULT_SPEED_PRESET = "car"
 
 # How often we push a new location while driving.
-# At car 60 km/h, 0.25 s → ~4.2 m/step at cruise — fluid in Find My.
+# At car 60 km/h, 0.25 s → ~4.2 m/step at cruise - fluid in Find My.
 TICK_SECONDS = 0.25
 
 # Road playback should remain on the router's centreline.  Even sub-metre
@@ -85,6 +86,9 @@ def haversine_m(a: Point, b: Point) -> float:
     dphi = math.radians(lat2 - lat1)
     dlambda = math.radians(lon2 - lon1)
     h = math.sin(dphi / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dlambda / 2) ** 2
+    # Floating-point roundoff can put h just outside [0, 1] for antipodal
+    # points, which would otherwise make asin raise a domain error.
+    h = max(0.0, min(1.0, h))
     return 2 * _EARTH_RADIUS_M * math.asin(math.sqrt(h))
 
 
@@ -155,7 +159,7 @@ def _dist_point_to_segment_m(px, py, ax, ay, bx, by) -> float:
 
 
 def rdp_thin(points: Sequence[Point], epsilon_m: float = RDP_EPSILON_M) -> List[Point]:
-    """Douglas–Peucker simplification in local metres (keeps endpoints)."""
+    """Douglas-Peucker simplification in local metres (keeps endpoints)."""
     pts = _clean(list(points))
     if len(pts) <= 2 or epsilon_m <= 0:
         return pts
@@ -183,7 +187,7 @@ def rdp_thin(points: Sequence[Point], epsilon_m: float = RDP_EPSILON_M) -> List[
 
 
 def _catmull_rom_xy(p0, p1, p2, p3, t: float):
-    """Uniform Catmull–Rom: passes through p1 at t=0 and p2 at t=1."""
+    """Uniform Catmull-Rom: passes through p1 at t=0 and p2 at t=1."""
     t2 = t * t
     t3 = t2 * t
     x = 0.5 * (
@@ -205,7 +209,7 @@ def catmull_rom_smooth(
     points: Sequence[Point],
     sample_m: float = SPLINE_SAMPLE_M,
 ) -> List[Point]:
-    """Densify a polyline with Catmull–Rom so turns are curves, not hard corners.
+    """Densify a polyline with Catmull-Rom so turns are curves, not hard corners.
 
     Endpoints are clamped (ghost points = endpoints). Two-point paths stay linear.
     """
@@ -490,16 +494,16 @@ def resample_by_speed(
 ):
     """Resample a route polyline into one (lat, lon) point per ``tick_seconds``.
 
-    :param coordinates: the route geometry as ``[[lon, lat], ...]`` — GeoJSON
-        order, exactly what OSRM returns. (We convert to (lat, lon) internally
+    :param coordinates: the route geometry as ``[[lon, lat], ...]`` - GeoJSON
+        order, exactly what the route planner returns. (We convert to (lat, lon) internally
         and return (lat, lon), which is what ``set_target`` expects.)
     :param speed_kmh: cruise travel speed; actual spacing eases around this
         unless ``duration_seconds`` overrides the whole trip length.
     :param smooth: opt-in legacy visual smoothing. Production callers leave
-        this False so every emitted point remains on the OSRM road polyline.
-        Catmull–Rom is unconstrained and can cut across or overshoot junctions.
+        this False so every emitted point remains on the planned polyline.
+        Catmull-Rom is unconstrained and can cut across or overshoot junctions.
     :param ease: if True, cosine ramp at start/end and slow through sharp turns
-        (ignored when ``duration_seconds`` is set — custom duration is exact).
+        (ignored when ``duration_seconds`` is set - custom duration is exact).
     :param duration_seconds: if set, pace the **same path** so it finishes in
         about this many seconds (destination fixed; speed is derived).
     :returns: a list of (lat, lon) points ending exactly on the destination.
@@ -541,3 +545,66 @@ def resample_by_speed(
         ease=ease,
         turn_zones=zones,
     )
+
+
+def resample_by_timing(
+    coordinates,
+    timing_sections,
+    *,
+    tick_seconds=TICK_SECONDS,
+    duration_seconds: Optional[float] = None,
+):
+    """Follow a route using router-provided time for each shape section.
+
+    Each timing entry contains ``start_index``, ``end_index``, and
+    ``duration_seconds`` referencing the original route geometry. This keeps
+    the exact path while naturally varying speed by road class, speed limit,
+    turns, and intersections as modeled by the router.
+    """
+    path = _prepare_road_path(coordinates, smooth=False)
+    if len(path) < 2:
+        return path
+
+    sections = []
+    for section in timing_sections or []:
+        try:
+            start = int(section["start_index"])
+            end = int(section["end_index"])
+            seconds = float(section["duration_seconds"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if start < 0 or end <= start or end >= len(path) or seconds <= 0:
+            continue
+        sections.append((start, end, seconds))
+    if not sections:
+        return []
+    # A partial timing profile would skip an uncovered part of the route and
+    # make the phone jump. Reject it so the API can report a clear bad route.
+    if sections[0][0] != 0 or sections[-1][1] != len(path) - 1:
+        return []
+    if any(sections[i][1] != sections[i + 1][0] for i in range(len(sections) - 1)):
+        return []
+
+    original_total = sum(item[2] for item in sections)
+    scale = 1.0
+    if duration_seconds is not None and float(duration_seconds) > 0 and original_total > 0:
+        scale = float(duration_seconds) / original_total
+
+    points: List[Point] = []
+    for start, end, seconds in sections:
+        section_path = path[start:end + 1]
+        distance = path_length_m(section_path)
+        if distance <= 0:
+            continue
+        ticks = max(1, int(round((seconds * scale) / max(tick_seconds, 1e-6))))
+        sampled = walk_path(
+            section_path,
+            distance / ticks,
+            _interpolate,
+            jitter_m=0.0,
+        )
+        points.extend(sampled)
+
+    if not points or points[-1] != path[-1]:
+        points.append(path[-1])
+    return points

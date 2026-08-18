@@ -2,3 +2,5 @@
 -r requirements.txt
 pytest>=8.0
 pytest-cov>=5.0
+# Newer Starlette releases use the split httpx2 package for TestClient.
+httpx2>=2.0

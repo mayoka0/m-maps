@@ -1,6 +1,6 @@
 """Native desktop app entry for M Maps (macOS only).
 
-Architecture (two processes — required so the window is a normal user GUI):
+Architecture (two processes - required so the window is a normal user GUI):
 
 1. This process (the double-clicked app) runs as the logged-in user and opens a
    pywebview window pointed at the local map server.
@@ -17,7 +17,7 @@ can outlive the window if we only `terminate()` osascript. We therefore:
   that starts a new server (one password prompt),
 - on window close, POST /shutdown then wait; fall back to elevated kill if needed.
 
-The spoof engine, modes, and HTTP API are unchanged — this is only a new
+The spoof engine, modes, and HTTP API are unchanged - this is only a new
 front door. No browser, no terminal.
 """
 from __future__ import annotations
@@ -25,7 +25,6 @@ from __future__ import annotations
 import atexit
 import argparse
 import os
-import pwd
 import shlex
 import signal
 import socket
@@ -36,6 +35,11 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 from typing import List, Optional, Tuple
+
+try:
+    import pwd
+except ImportError:  # Windows has no Unix password database module.
+    pwd = None  # type: ignore[assignment]
 
 import warnings
 
@@ -100,7 +104,7 @@ else:
 
 
 def _pid_file_path() -> Path:
-    """Writable PID path — never inside a read-only .app under /Applications.
+    """Writable PID path - never inside a read-only .app under /Applications.
 
     Elevated server runs as root but HOME/SUDO_USER point at the real user, so
     Application Support stays shared between the window process and the server.
@@ -120,7 +124,10 @@ def _pid_file_path() -> Path:
 
 def _real_user_and_home() -> Tuple[str, str]:
     """User/home for the pairing cache when the server runs as root."""
-    if os.geteuid() == 0:
+    if pwd is None:
+        name = os.environ.get("USERNAME") or os.environ.get("USER") or "user"
+        return name, str(Path.home())
+    if getattr(os, "geteuid", lambda: -1)() == 0:
         name = os.environ.get("SUDO_USER") or os.environ.get("USER")
         if name and name != "root":
             try:
@@ -151,7 +158,7 @@ def _pick_port(preferred: int = DEFAULT_PORT) -> int:
     Tries ``preferred`` when it is a positive port and free. Otherwise binds to
     port 0 and returns the OS-assigned ephemeral port.
 
-    Important: after ``bind((host, 0))`` the kernel assigns a real port — we
+    Important: after ``bind((host, 0))`` the kernel assigns a real port - we
     must return ``getsockname()[1]``, never the literal 0. Returning 0 was the
     desktop launch timeout (window URL became http://127.0.0.1:0).
     """
@@ -160,7 +167,7 @@ def _pick_port(preferred: int = DEFAULT_PORT) -> int:
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             try:
                 sock.bind((HOST, preferred))
-                # Preferred was free; return it (not getsockname needed — we asked for it).
+                # Preferred was free; return it (not getsockname needed - we asked for it).
                 return preferred
             except OSError:
                 pass
@@ -229,7 +236,7 @@ def _pythonpath_for_child() -> str:
 
 
 # ---------------------------------------------------------------------------
-# PID file — structural guard against zombie elevated servers
+# PID file - structural guard against zombie elevated servers
 # ---------------------------------------------------------------------------
 
 def _write_pid_file(port: int) -> None:
@@ -381,7 +388,7 @@ def run_server_only(port: int) -> int:
         print(f"Internal error: invalid server port {port!r}.", file=sys.stderr)
         return 1
 
-    # Never claim Dock / activation — this process is root + headless only.
+    # Never claim Dock / activation - this process is root + headless only.
     _become_headless_server_process()
     _ensure_project_on_path()
 
@@ -451,7 +458,7 @@ def _elevated_server_shell(port: int) -> str:
         + cd_part
         + " ".join(shlex.quote(part) for part in cmd)
     )
-    # Same elevated shell: reap zombies first, then start — one password prompt.
+    # Same elevated shell: reap zombies first, then start - one password prompt.
     return _shell_kill_stale_servers() + start
 
 
@@ -461,8 +468,8 @@ def start_elevated_server(port: int) -> subprocess.Popen:
     Returns the ``osascript`` Popen. It stays alive until the elevated server
     exits (window close → POST /shutdown → server stops → osascript ends).
 
-    AppleScript's default event timeout is ~2 minutes — far too short for a
-    map session — so we wrap the shell in a multi-day timeout.
+    AppleScript's default event timeout is ~2 minutes - far too short for a
+    map session - so we wrap the shell in a multi-day timeout.
     """
     shell = _elevated_server_shell(port)
     apple = (
@@ -471,11 +478,11 @@ def start_elevated_server(port: int) -> subprocess.Popen:
         "end timeout"
     )
     try:
-        # Don't capture stdout/stderr — keep the child simple. Errors surface
+        # Don't capture stdout/stderr - keep the child simple. Errors surface
         # in the map UI via /status if the device/tunnel fails after start.
         return subprocess.Popen(["osascript", "-e", apple])
     except FileNotFoundError:
-        print("osascript not found — this app only runs on macOS.", file=sys.stderr)
+        print("osascript not found - this app only runs on macOS.", file=sys.stderr)
         sys.exit(1)
 
 
@@ -529,7 +536,7 @@ def _configure_macos_app_identity() -> None:
     """Claim the process name / bundle strings used by Cocoa for UI chrome.
 
     The portable launcher runs system ``python3``, so mainBundle is Python's.
-    That is necessary but **not sufficient** for the menu-bar app name — see
+    That is necessary but **not sufficient** for the menu-bar app name - see
     ``_patch_pywebview_cocoa_identity`` and ``_force_menu_bar_app_name``.
     Never raises.
     """
@@ -548,7 +555,7 @@ def _configure_macos_app_identity() -> None:
         bundle = NSBundle.mainBundle()
         if bundle is None:
             return
-        # Patch both dictionaries — cocoa may bind to either at import time.
+        # Patch both dictionaries - cocoa may bind to either at import time.
         for getter in ("infoDictionary", "localizedInfoDictionary"):
             try:
                 info = getattr(bundle, getter)()
@@ -583,7 +590,7 @@ def _patch_pywebview_cocoa_identity() -> None:
     2. ``BrowserView._append_app_name`` builds "Quit …" / "Hide …" / About
        from that **module global**, not a live bundle re-read. Patching only
        ``infoDictionary()`` after import does not help if ``info`` already
-       points at a snapshot that still says Python — which is why the prior
+       points at a snapshot that still says Python - which is why the prior
        "fix" looked successful in isolation but the menu bar did not.
 
     3. ``_add_app_menu`` creates the application menu item with **no title**
@@ -718,7 +725,7 @@ def _app_icon_path() -> Optional[Path]:
 
 
 def _apply_macos_dock_icon() -> bool:
-    """Optionally set Dock icon — only when the bundle icon is not available.
+    """Optionally set Dock icon - only when the bundle icon is not available.
 
     Frozen .app builds must **not** call ``setApplicationIconImage_`` with a
     static PNG/ICNS. That replaces the system-managed Dock icon and blocks
@@ -755,6 +762,61 @@ def _apply_macos_dock_icon() -> bool:
         return False
 
 
+def _configure_macos_unified_titlebar(window: object) -> bool:
+    """Extend web content beneath a transparent native title bar.
+
+    This removes the otherwise empty row above M Maps without replacing the
+    real macOS window chrome. Close, minimize, zoom/full-screen, and normal
+    window behavior remain owned by AppKit. Cocoa UI changes are scheduled on
+    its main thread because pywebview runs ``func=`` callbacks separately.
+    """
+    if sys.platform != "darwin":
+        return False
+    try:
+        from AppKit import (
+            NSWindowCloseButton,
+            NSWindowMiniaturizeButton,
+            NSWindowTitleHidden,
+            NSWindowZoomButton,
+        )
+        from PyObjCTools import AppHelper
+    except Exception:
+        return False
+
+    native = getattr(window, "native", None)
+    if native is None:
+        return False
+
+    def _apply() -> None:
+        try:
+            # pywebview's frameless Cocoa mode supplies the full-size/textured
+            # window masks that make the title bar genuinely transparent. It
+            # hides the standard buttons by default; restore those real AppKit
+            # controls instead of drawing replacements in HTML.
+            native.setTitlebarAppearsTransparent_(True)
+            native.setTitleVisibility_(NSWindowTitleHidden)
+            for button_type in (
+                NSWindowCloseButton,
+                NSWindowMiniaturizeButton,
+                NSWindowZoomButton,
+            ):
+                button = native.standardWindowButton_(button_type)
+                if button is not None:
+                    button.setHidden_(False)
+            # macOS 11+ can otherwise leave a faint separator where the old
+            # title bar ended. Zero is NSWindowTitlebarSeparatorStyleNone.
+            if hasattr(native, "setTitlebarSeparatorStyle_"):
+                native.setTitlebarSeparatorStyle_(0)
+        except Exception:
+            pass
+
+    try:
+        AppHelper.callAfter(_apply)
+        return True
+    except Exception:
+        return False
+
+
 def _open_window(url: str) -> None:
     # CRITICAL order: claim process/bundle identity BEFORE pywebview imports
     # cocoa (which snapshots CFBundleName and creates NSApplication).
@@ -767,10 +829,31 @@ def _open_window(url: str) -> None:
     _configure_macos_app_identity()
     _apply_macos_dock_icon()
 
+    # The page uses this local-only marker to reserve space for the native
+    # traffic lights after the title bar is made transparent. Browser `serve`
+    # sessions keep their existing edge-to-edge command bar.
+    desktop_url = url + ("&" if "?" in url else "?") + "desktop=1"
+
+    native_window = webview.create_window(
+        WINDOW_TITLE,
+        desktop_url,
+        width=WINDOW_WIDTH,
+        height=WINDOW_HEIGHT,
+        min_size=(720, 480),
+        confirm_close=False,
+        text_select=True,
+        # Cocoa's frameless mode keeps the native titled window but makes its
+        # content full-size. `_configure_macos_unified_titlebar` restores the
+        # traffic lights that pywebview normally hides in this mode.
+        frameless=True,
+        easy_drag=False,
+    )
+
     def _on_gui_ready() -> None:
         _configure_macos_app_identity()
         _force_menu_bar_app_name()
         _apply_macos_dock_icon()
+        _configure_macos_unified_titlebar(native_window)
         try:
             import threading
 
@@ -778,23 +861,16 @@ def _open_window(url: str) -> None:
                 time.sleep(0.35)
                 _force_menu_bar_app_name()
                 _apply_macos_dock_icon()
+                _configure_macos_unified_titlebar(native_window)
                 time.sleep(0.75)
                 _force_menu_bar_app_name()
                 _apply_macos_dock_icon()
+                _configure_macos_unified_titlebar(native_window)
 
             threading.Thread(target=_retry, daemon=True).start()
         except Exception:
             pass
 
-    webview.create_window(
-        WINDOW_TITLE,
-        url,
-        width=WINDOW_WIDTH,
-        height=WINDOW_HEIGHT,
-        min_size=(720, 480),
-        confirm_close=False,
-        text_select=True,
-    )
     # Cocoa + WebKit; private_mode=False keeps localStorage (map theme).
     webview.start(gui="cocoa", private_mode=False, func=_on_gui_ready)
 
@@ -807,7 +883,7 @@ def run_desktop(port: int) -> int:
 
     # Resolve a real free port up front (never 0). Prefer the requested port
     # when free; otherwise take an OS-assigned ephemeral port.
-    # Note: a zombie may still hold DEFAULT_PORT — elevated start kills it first,
+    # Note: a zombie may still hold DEFAULT_PORT - elevated start kills it first,
     # so we re-check after launch if needed. Prefer fixed default when free now.
     try:
         port = _pick_port(port if port and port > 0 else DEFAULT_PORT)
@@ -983,7 +1059,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         if os.geteuid() != 0:
             print("Internal error: --server-only must run as root.", file=sys.stderr)
             return 1
-        # Headless elevated path — no Dock identity patching, no webview.
+        # Headless elevated path - no Dock identity patching, no webview.
         return run_server_only(args.port)
 
     # GUI process only from here.

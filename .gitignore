@@ -9,14 +9,15 @@ dist/
 .pytest_cache/
 .DS_Store
 .mmaps_server.pid
+.layout-verify/
 
-# Local-only notes / agent context — never publish
+# Local-only notes / agent context - never publish
 CLAUDE.md
 Claude.md
 BUGS.md
 BUGS2.md
 
-# Local user secrets / config — never commit API keys
+# Local user secrets / config - never commit API keys
 .mmaps/
 *.local.json
 config.local.json
@@ -27,3 +28,13 @@ google-maps-key*
 .coverage
 coverage.xml
 htmlcov/
+# Android Studio / Gradle machine-local files and build output
+android-companion/.gradle/
+android-companion/.idea/
+android-companion/local.properties
+android-companion/**/build/
+
+# Local environment files
+.env
+.env.*
+!.env.example

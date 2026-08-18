@@ -7,7 +7,7 @@ body:
     attributes:
       value: |
         Thanks for taking the time to report a bug. The more detail you can give,
-        the easier it is to reproduce — especially iOS / macOS versions and which
+        the easier it is to reproduce - especially iOS / macOS versions and which
         mode you were using.
 
   - type: input
@@ -89,6 +89,6 @@ body:
     id: extra
     attributes:
       label: Extra context
-      description: Screenshots, logs, cable/USB notes — anything else useful
+      description: Screenshots, logs, cable/USB notes - anything else useful
     validations:
       required: false

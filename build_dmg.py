@@ -31,7 +31,7 @@ ICON_ICNS = PROJECT_ROOT / "assets" / "icon" / "AppIcon.icns"
 LOGO_SVG = PROJECT_ROOT / "assets" / "logo" / "mayoka-black.svg"
 MASTER_ICON_PNG = PROJECT_ROOT / "assets" / "icon" / "AppIcon-1024.png"
 
-# Finder window geometry — right/bottom = left+width / top+height.
+# Finder window geometry - right/bottom = left+width / top+height.
 WINDOW_LEFT = 200
 WINDOW_TOP = 140
 WINDOW_WIDTH = 660
@@ -88,7 +88,7 @@ def _make_background_png(path: Path) -> None:
 
     # Soft top bar
     draw.rectangle([0, 0, w, 48], fill=(20, 26, 35, 255))
-    draw.text((24, 16), "Install M Maps — drag to Applications", fill=(230, 237, 243, 255))
+    draw.text((24, 16), "Install M Maps - drag to Applications", fill=(230, 237, 243, 255))
 
     # Subtle arrow from app → Applications
     y = APP_XY[1] + 8

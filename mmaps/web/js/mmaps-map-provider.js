@@ -1,5 +1,5 @@
 /**
- * MMapsProvider — Stream 2: MapLibre ↔ Google basemap switching.
+ * MMapsProvider - Stream 2: MapLibre ↔ Google basemap switching.
  *
  * Contract:
  *   • Only this module creates/destroys google.maps.Map or loads the JS API script.
@@ -7,7 +7,7 @@
  *   • Google layer is never interactive until fully ready (gmap-active).
  *   • Failed load fully tears down #gmap so the next attempt is a genuine retry
  *     (script may stay cached for the same key; map instance is always fresh).
- *   • Does not read/write API key storage — caller passes key from MMapsKeys.
+ *   • Does not read/write API key storage - caller passes key from MMapsKeys.
  *   • Provider control lives in the header (#mapProviderSeg); never reparented
  *     into the map / zoom stack.
  *   • Google map type (roadmap/satellite/hybrid/terrain) is owned here only.
@@ -101,7 +101,7 @@
     if (!key) return Promise.reject(new Error('No API key entered.'));
 
     // Google only allows one Maps JS bootstrap per page lifetime.
-    // Recovery is a page reload (fresh script context) — not a full app quit.
+    // Recovery is a page reload (fresh script context) - not a full app quit.
     if (global.google && global.google.maps) {
       if (scriptKey && scriptKey !== key) {
         var switchErr = new Error(
@@ -233,7 +233,7 @@
               'Google Maps showed an error page. Check billing, Maps JavaScript API, and Application restrictions = None.'
             );
           } else {
-            finish(true, 'Key works — map tiles load.');
+            finish(true, 'Key works - map tiles load.');
           }
         }, 300);
       });
@@ -245,7 +245,7 @@
             'Google Maps failed to render (Oops). Usually: billing, Maps JavaScript API, or Application restrictions (use None on desktop).'
           );
         } else if (host.querySelector('canvas, img, .gm-style')) {
-          finish(true, 'Key works — map surface appeared.');
+          finish(true, 'Key works - map surface appeared.');
         } else {
           finish(false, 'Timed out waiting for Google Maps to render.');
         }
@@ -316,7 +316,7 @@
     if (gmap) return gmap;
     var host = $('gmap');
     if (!host) throw new Error('Google map container missing.');
-    // Full-size under MapLibre — real viewport, not interactive yet.
+    // Full-size under MapLibre - real viewport, not interactive yet.
     setLayer('loading');
     var center = { lat: 20, lng: 0 };
     var zoom = 2;
@@ -498,7 +498,7 @@
       return { ok: true, mapTypeId: mapTypeId };
     },
 
-    /** Validator for MMapsKeys.test — Maps JS only (no Geocoding required). */
+    /** Validator for MMapsKeys.test - Maps JS only (no Geocoding required). */
     validateKey: function (key) {
       return loadScript(key).then(function () {
         return probeRender();

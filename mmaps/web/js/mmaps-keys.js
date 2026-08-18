@@ -1,5 +1,5 @@
 /**
- * MMapsKeys — Stream 1: API key / credential lifecycle.
+ * MMapsKeys - Stream 1: API key / credential lifecycle.
  *
  * Contract (no other module may break this):
  *   • localStorage is written ONLY by save() / clearSaved().

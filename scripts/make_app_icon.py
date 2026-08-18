@@ -28,7 +28,7 @@ Platform note (Icon Composer `icon.json` in the same DMG):
     "supported-platforms": { "squares": "shared" }
 so this production grid is the shared square template for iOS / iPadOS / macOS.
 (macOS 27 on the design-resources page only lists a UI Kit; app-icon production
-grid lives in the App Icon Template above — confirmed by HIG + Icon Composer.)
+grid lives in the App Icon Template above - confirmed by HIG + Icon Composer.)
 
 ## Corner shape
 
@@ -37,7 +37,7 @@ The DMG's Icon Composer marketing export
 corner mask of that template. We store only its **alpha channel** as
 `assets/icon/apple_official_icon_shape_mask.png` (geometry, no demo art).
 
-A superellipse (n≈5) is NOT used — that was the previous approximation.
+A superellipse (n≈5) is NOT used - that was the previous approximation.
 
 ## macOS Dock presentation (.icns)
 
@@ -46,7 +46,7 @@ files (Finder, Safari, Messages, third-party apps) do **not** fill the canvas:
 measured content width is consistently ~82.03125% (840/1024), with transparent
 margin so Dock neighbours match in visual weight.
 
-    SHAPE_SIZE = 840   # 0.8203125 × 1024 — matches system .icns at 512px
+    SHAPE_SIZE = 840   # 0.8203125 × 1024 - matches system .icns at 512px
 
 Pipeline:
   1. Rasterize mayoka-black.svg
@@ -74,7 +74,7 @@ OFFICIAL_SHAPE_MASK = OUT_DIR / "apple_official_icon_shape_mask.png"
 
 # --- Official App Icon Template.psd measurements (1024 production canvas) ---
 CANVAS = 1024
-# Guides: 128, 256, 384, 512, 640, 768, 896 — content box is the inner 6×6 cells.
+# Guides: 128, 256, 384, 512, 640, 768, 896 - content box is the inner 6×6 cells.
 GRID_CELL = 128
 CONTENT_ORIGIN = GRID_CELL          # 128
 CONTENT_SIZE = CANVAS - 2 * GRID_CELL  # 768  (128 … 896)
@@ -214,7 +214,7 @@ def _build_icns(master_png: Path, icns: Path) -> None:
             img.resize((size, size), Image.Resampling.LANCZOS).save(buf, format="PNG")
             (iconset / name).write_bytes(buf.getvalue())
         if len(list(iconset.iterdir())) != 10:
-            raise SystemExit("iconset incomplete — expected 10 PNGs")
+            raise SystemExit("iconset incomplete - expected 10 PNGs")
         icns.parent.mkdir(parents=True, exist_ok=True)
         subprocess.check_call(
             ["iconutil", "-c", "icns", str(iconset), "-o", str(icns)]

@@ -3,7 +3,22 @@
 All notable changes to M Maps are listed here. Version numbers match GitHub release tags.
 Unreleased develop builds use `X.Y.Z-beta.N` (not tagged as public releases).
 
-## [1.0.5] — 2026-08-07
+## [1.0.6] - 2026-08-18
+
+### Cross-platform device support
+
+- Added the Android Companion app and ADB transport for mock-location control.
+- Added automatic iPhone and Android discovery with one active device at a time.
+- Added reconnect handling and acknowledgement checks for Android commands.
+- Reused the shared movement engine for Android Teleport, Route, Fly, and Multi-stop trips.
+
+### Reliability and interface
+
+- Improved device confirmation, connection recovery, route timing, and movement status reporting.
+- Added route and Android integration coverage to the offline test suite.
+- Updated project documentation, contributor guidance, and Codecov reporting.
+
+## [1.0.5] - 2026-08-07
 
 ### Device confirmation
 
@@ -12,17 +27,17 @@ Unreleased develop builds use `X.Y.Z-beta.N` (not tagged as public releases).
 - Added a dimmed backdrop, clear title, accessible dialog semantics, and stable focus that is not
   repeatedly stolen by one-second status polling.
 
-## [1.0.4] — 2026-08-07
+## [1.0.4] - 2026-08-07
 
 ### Road fidelity and movement
 
 - Road playback now follows the complete OSRM geometry exactly by default. Unconstrained
-  Catmull–Rom smoothing is legacy opt-in only because it could cut a junction, briefly enter a
+  Catmull-Rom smoothing is legacy opt-in only because it could cut a junction, briefly enter a
   nearby road, and then double back.
 - Removed synthetic lateral jitter so generated road points stay on the router's centerline.
 - **Cosine velocity easing** still ramps from rest, eases into the destination, and slows through
   sharp turns without changing the routed geometry. Fly uses takeoff/landing ramps.
-- Protocol still only sets lat/lon — naturalness comes entirely from the point stream and timing.
+- Protocol still only sets lat/lon - naturalness comes entirely from the point stream and timing.
 
 ### Map and interface
 
@@ -38,7 +53,7 @@ Unreleased develop builds use `X.Y.Z-beta.N` (not tagged as public releases).
 
 ### Multi-stop waits
 
-- Stops can hold for a preset or custom 1–1,440 minute dwell before the next leg.
+- Stops can hold for a preset or custom 1-1,440 minute dwell before the next leg.
 - Added a live wait countdown and **Leave now** action; the final stop continues to hold normally.
 - Kept wait selectors stable across one-second status polling so their menus no longer disappear
   while the user is choosing a duration.
@@ -46,10 +61,10 @@ Unreleased develop builds use `X.Y.Z-beta.N` (not tagged as public releases).
 ### Realistic speeds (from beta.1)
 
 - Road speeds: walk 5, bicycle 16, motorcycle 55, car **60** km/h. Duration ≈ path distance ÷ speed.
-- Flight cruise ~**875** km/h (mild slow/normal/fast ±15%); no 60–240× compression.
+- Flight cruise ~**875** km/h (mild slow/normal/fast ±15%); no 60-240× compression.
 - Drive tick 0.25 s with no lateral jitter; fly tick 0.5 s, no jitter.
 
-## [1.0.3] — 2026-07-24
+## [1.0.3] - 2026-07-24
 
 ### Packaging & identity
 
@@ -60,7 +75,7 @@ Unreleased develop builds use `X.Y.Z-beta.N` (not tagged as public releases).
 
 ### Motion & UI
 
-- Route / drive motion updates **5× per second** (was once per second) so the Find My dot glides instead of stop–go.
+- Route / drive motion updates **5× per second** (was once per second) so the Find My dot glides instead of stop-go.
 - Visual polish: glass-style translucent panels (WebKit `backdrop-filter`), refreshed indigo/slate palette, clearer update-available banner.
 
 ### Reliability
@@ -68,22 +83,22 @@ Unreleased develop builds use `X.Y.Z-beta.N` (not tagged as public releases).
 - Desktop attach: Trust dialog works headless; clear message when Developer Mode is off; attach the **confirmed** USB serial when multiple phones are present.
 - Clearing “link lost” after Stop & restore GPS so status chips recover correctly.
 
-## [1.0.2] — 2026-07-23
+## [1.0.2] - 2026-07-23
 
 - Fixed the menu-bar app name so it shows **M Maps** (not “Python”), by root-causing how pywebview builds the Cocoa application menu.
 - Regenerated the shipping app icon as a padded white squircle (macOS-style margin and continuous corners), instead of a hard-edged full-bleed square.
 - Tightened the DMG installer window (compact size, branded background, drag-to-Applications cue).
 
-### Known issue (as of 1.0.2 — fixed in 1.0.3)
+### Known issue (as of 1.0.2 - fixed in 1.0.3)
 
 - Dock hover / Cmd+Tab showing **Python** was addressed in 1.0.3 via the PyInstaller bootloader packaging.
 
-## [1.0.1] — 2026-07-23
+## [1.0.1] - 2026-07-23
 
 - Attempted fix for the app appearing as “Python” instead of “M Maps” in the menu bar (in-process name / bundle-string patches). **That identity fix did not fully work** in real installs.
 - Added a notify-only update check (GitHub Releases API; no auto-install).
 
-## [1.0.0] — 2026-07-23
+## [1.0.0] - 2026-07-23
 
 - First public release.
 - Native macOS app and browser map UI over a USB spoof session.

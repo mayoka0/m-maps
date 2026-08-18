@@ -6,7 +6,7 @@
 
 - [ ] Ran locally (`m_maps.py app` and/or `serve`)
 - [ ] Relevant pure-logic / offline checks (if any)
-- [ ] **Tested against a real iPhone** (CI cannot do this — check only if you did)
+- [ ] **Tested against a real iPhone** (CI cannot do this - check only if you did)
 
 Notes on what you tried (modes, iOS version, etc.):
 

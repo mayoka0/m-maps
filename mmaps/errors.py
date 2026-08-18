@@ -8,34 +8,34 @@ from __future__ import annotations
 # Exception type names (and substrings of the message) → user-facing text.
 _BY_TYPE = {
     "DeviceNotFoundError": (
-        "Lost the connection to the iPhone — check the USB cable, unlock the phone, and wait a moment."
+        "Lost the connection to the iPhone - check the USB cable, unlock the phone, and wait a moment."
     ),
     "NoDeviceConnectedError": (
-        "No iPhone on USB — plug it in, unlock it, and keep the cable seated."
+        "No iPhone on USB - plug it in, unlock it, and keep the cable seated."
     ),
     "NoDeviceError": (
-        "No iPhone on USB — plug it in, unlock it, and keep the cable seated."
+        "No iPhone on USB - plug it in, unlock it, and keep the cable seated."
     ),
     "PasswordRequiredError": (
-        "The iPhone is locked or busy — unlock it and keep it awake."
+        "The iPhone is locked or busy - unlock it and keep it awake."
     ),
     "PasscodeRequiredError": (
-        "The iPhone needs its passcode — unlock it and try again."
+        "The iPhone needs its passcode - unlock it and try again."
     ),
     "RootRequiredError": (
         "Administrator permission is required to talk to the iPhone."
     ),
     "ConnectionTerminatedError": (
-        "Lost the connection to the iPhone — reconnecting if possible."
+        "Lost the connection to the iPhone - reconnecting if possible."
     ),
     "ChannelClosedError": (
-        "Lost the connection to the iPhone — reconnecting if possible."
+        "Lost the connection to the iPhone - reconnecting if possible."
     ),
     "ConnectionFailedError": (
-        "Couldn’t reach the iPhone — check the USB cable."
+        "Couldn’t reach the iPhone - check the USB cable."
     ),
     "InvalidConnectionError": (
-        "Couldn’t reach the iPhone — check the USB cable."
+        "Couldn’t reach the iPhone - check the USB cable."
     ),
 }
 
@@ -54,7 +54,7 @@ def humanize_error(error: BaseException) -> str:
         if detail:
             return detail
     if name in ("OSError", "ConnectionError", "TimeoutError"):
-        return "Lost the connection to the iPhone — check the USB cable."
+        return "Lost the connection to the iPhone - check the USB cable."
     return "Something went wrong talking to the iPhone."
 
 

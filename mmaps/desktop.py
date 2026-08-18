@@ -25,7 +25,6 @@ from __future__ import annotations
 import atexit
 import argparse
 import os
-import pwd
 import shlex
 import signal
 import socket
@@ -36,6 +35,11 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 from typing import List, Optional, Tuple
+
+try:
+    import pwd
+except ImportError:  # Windows has no Unix password database module.
+    pwd = None  # type: ignore[assignment]
 
 import warnings
 
@@ -120,7 +124,10 @@ def _pid_file_path() -> Path:
 
 def _real_user_and_home() -> Tuple[str, str]:
     """User/home for the pairing cache when the server runs as root."""
-    if os.geteuid() == 0:
+    if pwd is None:
+        name = os.environ.get("USERNAME") or os.environ.get("USER") or "user"
+        return name, str(Path.home())
+    if getattr(os, "geteuid", lambda: -1)() == 0:
         name = os.environ.get("SUDO_USER") or os.environ.get("USER")
         if name and name != "root":
             try:

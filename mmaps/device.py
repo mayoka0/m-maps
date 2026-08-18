@@ -5,9 +5,13 @@ tunnel, no root required. The iOS 17+ tunnel (needed only to *move* the
 location) lives in location.py.
 """
 import os
-import pwd
 from pathlib import Path
 from typing import Optional
+
+try:
+    import pwd
+except ImportError:  # Windows has no Unix password database module.
+    pwd = None  # type: ignore[assignment]
 
 from pymobiledevice3 import usbmux
 from pymobiledevice3.exceptions import (
@@ -35,7 +39,7 @@ def pairing_cache_dir() -> Path:
     (via $SUDO_USER) so the same cache is used whether or not we're root.
     """
     sudo_user = os.environ.get("SUDO_USER")
-    if sudo_user and os.geteuid() == 0:
+    if sudo_user and pwd is not None and getattr(os, "geteuid", lambda: -1)() == 0:
         try:
             return Path(pwd.getpwnam(sudo_user).pw_dir) / ".pymobiledevice3"
         except KeyError:

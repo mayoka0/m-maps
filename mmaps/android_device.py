@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import json
 import os
-import pwd
 from pathlib import Path
 import shutil
 import socket
@@ -17,6 +16,11 @@ import threading
 import time
 from dataclasses import dataclass
 from typing import Callable, Dict, List, Optional, Sequence
+
+try:
+    import pwd
+except ImportError:  # Windows has no Unix password database module.
+    pwd = None  # type: ignore[assignment]
 
 
 COMPANION_PACKAGE = "org.mmaps.companion"
@@ -68,7 +72,7 @@ def find_adb() -> str:
     # ``serve`` may be launched with sudo for iPhone tunnel access. Reuse the
     # logged-in user's Android SDK instead of looking only under /var/root.
     sudo_user = os.environ.get("SUDO_USER")
-    if sudo_user:
+    if sudo_user and pwd is not None:
         try:
             user_home = Path(pwd.getpwnam(sudo_user).pw_dir)
             candidates.extend([

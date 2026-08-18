@@ -1,5 +1,5 @@
 /**
- * MMapsAdapter — Stream 4: single overlay API for features.
+ * MMapsAdapter - Stream 4: single overlay API for features.
  *
  * Features (IP approx, routes, trips, status poll) call ONLY this module
  * for map visuals. They must not touch google.maps or dual-write helpers.

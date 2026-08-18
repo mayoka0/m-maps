@@ -11,6 +11,7 @@ virtual network interface (utun) on the Mac, which macOS restricts to root.
 """
 import argparse
 import asyncio
+import math
 import os
 import sys
 import threading
@@ -23,6 +24,7 @@ warnings.filterwarnings("ignore", message="urllib3 v2 only supports OpenSSL 1.1.
 from pymobiledevice3.exceptions import PasscodeRequiredError, PasswordRequiredError
 
 from mmaps import device, location
+from mmaps.errors import humanize_error
 
 
 def read_coordinates(args) -> tuple:
@@ -33,9 +35,9 @@ def read_coordinates(args) -> tuple:
         lat = _read_float("Latitude (-90 to 90): ")
         lon = _read_float("Longitude (-180 to 180): ")
 
-    if not (-90.0 <= lat <= 90.0):
+    if not (math.isfinite(lat) and -90.0 <= lat <= 90.0):
         raise SystemExit(f"Latitude {lat} is out of range (-90 to 90).")
-    if not (-180.0 <= lon <= 180.0):
+    if not (math.isfinite(lon) and -180.0 <= lon <= 180.0):
         raise SystemExit(f"Longitude {lon} is out of range (-180 to 180).")
     return lat, lon
 
@@ -108,12 +110,12 @@ async def cmd_set(args) -> int:
             if kind == "connected":
                 print(f"Location set to {lat}, {lon}. Check Maps or Find My on the phone.")
                 if not prompt_shown:
-                    print("   Holding it active — press Enter to clear and restore the real GPS.")
+                    print("   Holding it active - press Enter to clear and restore the real GPS.")
                     prompt_shown = True
             elif kind == "connection_lost":
-                print("Lost the connection — reconnecting...")
+                print("Lost the connection - reconnecting...")
             elif kind == "reconnected":
-                print("Reconnected — location is active again.")
+                print("Reconnected - location is active again.")
             elif kind == "cleared":
                 print("Cleared. The phone should report its real location again.")
             elif kind == "clear_failed":
@@ -140,7 +142,7 @@ async def cmd_clear(args) -> int:
             await location.clear_via_new_session(client)
             print("Cleared. The phone should report its real location again.")
         except Exception as e:
-            print(f"Failed to clear cleanly: {e}")
+            print(f"Failed to clear cleanly: {humanize_error(e)}")
             print("Try reconnecting the USB cable and running this again.")
             return 1
         return 0
@@ -153,9 +155,15 @@ async def _serve_preflight() -> bool:
 
     Runs on a throwaway loop and closes its connection; the server reconnects on
     uvicorn's own loop (device sockets must live on the loop that uses them).
-    Handling trust / Developer Mode here — including the reboot Developer Mode
-    needs — keeps those interactive prompts in the terminal, not the browser.
+    Handling trust / Developer Mode here - including the reboot Developer Mode
+    needs - keeps those interactive prompts in the terminal, not the browser.
     """
+    # Unified mode is allowed to start with Android only. If an iPhone is not
+    # present, defer all iPhone-specific trust checks until it is selected.
+    from pymobiledevice3 import usbmux
+    if not any(item.is_usb for item in await usbmux.list_devices()):
+        return True
+
     client = await device.connect(autopair=False)
     try:
         client = await device.ensure_trusted(client)
@@ -172,7 +180,7 @@ async def _serve_preflight() -> bool:
 def _open_browser_when_ready(url: str, host: str, port: int) -> None:
     """Wait for the server to accept connections, then open the browser once.
 
-    Connects to the same host we bind to (localhost or the LAN IP) — binding
+    Connects to the same host we bind to (localhost or the LAN IP) - binding
     to a LAN address does not also listen on 127.0.0.1.
     """
     import socket
@@ -190,7 +198,8 @@ def _open_browser_when_ready(url: str, host: str, port: int) -> None:
 
 
 def cmd_serve(args) -> int:
-    if not asyncio.run(_serve_preflight()):
+    platform = "android" if getattr(args, "android", False) else "auto"
+    if platform in {"ios", "auto"} and not asyncio.run(_serve_preflight()):
         return 1
 
     from mmaps import server
@@ -211,11 +220,11 @@ def cmd_serve(args) -> int:
         print(f"LAN mode: open {url} on any device on this Wi-Fi")
         print()
         print("WARNING: Anyone on this Wi-Fi network can open and control this page.")
-        print("         No password — only your home network keeps it private.")
+        print("         No password - only your home network keeps it private.")
         print("         Stop the server (Ctrl+C) when you are done.")
     else:
         print(f"Starting the M Maps server at {url}")
-        print("(localhost only — pass --lan to open it from other devices on your Wi-Fi)")
+        print("(localhost only - pass --lan to open it from other devices on your Wi-Fi)")
     print()
     print("Leave this terminal running. Press Ctrl+C to stop and restore your real GPS.")
     if not args.no_browser:
@@ -224,11 +233,11 @@ def cmd_serve(args) -> int:
         ).start()
 
     try:
-        server.run(host=host, port=args.port, lan=lan)
+        server.run(host=host, port=args.port, lan=lan, platform=platform)
     except KeyboardInterrupt:
         pass
     print()
-    print("Server stopped. Your iPhone's real GPS has been restored.")
+    print("Server stopped. Reconnect a disconnected Android phone before using Restore GPS if it was still holding a mock location.")
     return 0
 
 
@@ -244,9 +253,17 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("clear", help="clear any simulated location, restoring real GPS (needs sudo)")
 
-    serve_parser = sub.add_parser("serve", help="open a map GUI to click-to-teleport the iPhone (needs sudo)")
+    serve_parser = sub.add_parser(
+        "serve",
+        help="open the unified map GUI for iPhone or Android (iPhone support needs sudo)",
+    )
     serve_parser.add_argument("--port", type=int, default=8765, help="local port to serve on (default: 8765)")
     serve_parser.add_argument("--no-browser", action="store_true", help="don't auto-open the browser")
+    serve_parser.add_argument(
+        "--android",
+        action="store_true",
+        help="legacy Android-only mode; unified auto-detection is now the default",
+    )
     serve_parser.add_argument(
         "--lan",
         action="store_true",
@@ -267,7 +284,9 @@ def main() -> int:
     parser = build_parser()
     args = parser.parse_args()
 
-    if args.command in ("set", "clear", "serve"):
+    if args.command in ("set", "clear") or (
+        args.command == "serve" and not getattr(args, "android", False)
+    ):
         require_root(args.command)
 
     try:

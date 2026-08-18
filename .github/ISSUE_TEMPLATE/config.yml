@@ -2,4 +2,4 @@ blank_issues_enabled: true
 contact_links:
   - name: Security vulnerability
     url: https://github.com/mayoka0/m-maps/security/advisories/new
-    about: Report a technical security issue privately — do not open a public issue.
+    about: Report a technical security issue privately - do not open a public issue.

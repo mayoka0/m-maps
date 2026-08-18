@@ -1,7 +1,7 @@
 """Multi-stop trip helpers: decide fly vs drive per leg.
 
 Pure, testable. The UI plans legs (OSRM + nearest airport) and POST /trip runs
-them sequentially through SpoofSession — each leg is a normal drive or fly.
+them sequentially through SpoofSession - each leg is a normal drive or fly.
 """
 from typing import Optional
 

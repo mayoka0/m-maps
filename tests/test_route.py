@@ -10,6 +10,7 @@ from mmaps.route import (
     ease_cosine,
     haversine_m,
     resample_by_speed,
+    resample_by_timing,
 )
 
 
@@ -19,6 +20,12 @@ def test_haversine_known_short_segment():
     b = (48.0, 2.01)
     d = haversine_m(a, b)
     assert 700 < d < 900
+
+
+def test_haversine_antipodal_points_stays_finite():
+    distance = haversine_m((0.0, 0.0), (0.0, 180.0))
+    assert math.isfinite(distance)
+    assert distance > 20_000_000
 
 
 def test_resample_empty_and_single():
@@ -136,14 +143,14 @@ def test_catmull_rom_rounds_sharp_corner_only_when_explicitly_requested():
     # At least one interior sample sits clearly inside the corner (off both legs).
     interior = smooth[1:-1]
     max_inside = max(dist_to_l_legs(p) for p in interior)
-    assert max_inside > 8.0  # metres off the hard L — a real curve cut
+    assert max_inside > 8.0  # metres off the hard L - a real curve cut
 
 
 def test_default_drive_stays_on_osrm_polyline_at_tight_parallel_turn():
     """Regression: an unconstrained spline sent the phone onto a wrong road.
 
     This U-turn represents two nearby parallel roads.  Default production
-    resampling must stay on the supplied OSRM segments; otherwise Find My can
+    resampling must stay on the supplied router segments; otherwise Find My can
     map-match an off-route sample to the neighboring road and then appear to
     double back.
     """
@@ -239,3 +246,39 @@ def test_duration_override_paces_same_path():
     eta = len(pts) * TICK_SECONDS
     assert abs(eta - target) < target * 0.12
     assert abs(pts[-1][1] - 2.3) < 1e-5
+
+
+def test_router_timing_changes_speed_between_sections():
+    # First half takes 100 s (local street); second half takes 20 s (highway).
+    coords = [[-83.0, 42.0], [-82.99, 42.0], [-82.98, 42.0]]
+    sections = [
+        {"start_index": 0, "end_index": 1, "duration_seconds": 100.0},
+        {"start_index": 1, "end_index": 2, "duration_seconds": 20.0},
+    ]
+    points = resample_by_timing(coords, sections, tick_seconds=1.0)
+
+    # Approximately one point per second: 100 slow points + 20 fast points.
+    assert 118 <= len(points) <= 122
+    slow_step = haversine_m(points[10], points[11])
+    fast_step = haversine_m(points[105], points[106])
+    assert fast_step > slow_step * 4
+    assert points[-1] == (42.0, -82.98)
+
+
+def test_router_timing_duration_override_scales_all_sections():
+    coords = [[-83.0, 42.0], [-82.99, 42.0], [-82.98, 42.0]]
+    sections = [
+        {"start_index": 0, "end_index": 1, "duration_seconds": 80.0},
+        {"start_index": 1, "end_index": 2, "duration_seconds": 20.0},
+    ]
+    points = resample_by_timing(
+        coords, sections, tick_seconds=1.0, duration_seconds=50.0
+    )
+    assert 49 <= len(points) <= 51
+    assert points[-1] == (42.0, -82.98)
+
+
+def test_partial_router_timing_is_rejected_instead_of_jumping():
+    coords = [[-83.0, 42.0], [-82.99, 42.0], [-82.98, 42.0]]
+    sections = [{"start_index": 1, "end_index": 2, "duration_seconds": 20.0}]
+    assert resample_by_timing(coords, sections, tick_seconds=1.0) == []

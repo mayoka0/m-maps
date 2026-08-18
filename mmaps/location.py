@@ -7,12 +7,12 @@ RemoteXPC tunnel over USB. Getting there means:
      connection and start a TCP tunnel through it. This creates a virtual
      network interface (utun) on the Mac, which is why it needs root.
   2. Connect to the RemoteServiceDiscovery (RSD) endpoint the tunnel hands
-     back — an (address, port) pair.
+     back - an (address, port) pair.
   3. Open a DVT (Instruments) connection over RSD and use its
      LocationSimulation channel to set/clear the simulated coordinates.
 
 The simulated location only sticks around while the DVT connection from step
-3 stays open — closing it (even cleanly) lets the phone fall back to its real
+3 stays open - closing it (even cleanly) lets the phone fall back to its real
 GPS. That's why `hold_location` keeps the connection alive and re-asserts the
 coordinate on a timer, rather than setting once and disconnecting.
 """
@@ -50,7 +50,7 @@ CONNECTION_LOST_ERRORS = (
 )
 
 # Phone gone from USB mid-session (cable jostled, brief disconnect). These are
-# PyMobileDevice3Exception subclasses — *not* OSError/ConnectionError — so they
+# PyMobileDevice3Exception subclasses - *not* OSError/ConnectionError - so they
 # must be listed explicitly or the hold loop dies instead of reconnecting.
 DEVICE_LOST_ERRORS = (
     DeviceNotFoundError,
@@ -59,7 +59,7 @@ DEVICE_LOST_ERRORS = (
 
 # "Device momentarily locked/busy" (lockdown's PasswordProtected). During a
 # drive the phone can briefly refuse a lockdown/DVT request and then accept the
-# next one — a transient blip, not a real failure. We treat these exactly like
+# next one - a transient blip, not a real failure. We treat these exactly like
 # a dropped tunnel: back off and retry on the next tick rather than surfacing a
 # scary error the drive has already recovered from.
 TRANSIENT_DEVICE_ERRORS = (
@@ -117,7 +117,7 @@ async def hold_location(lockdown_client, coordinate_source, stop_event, *,
 
     Opens the tunnel + DVT session, then loops: pull the current target from
     ``coordinate_source`` and send it, every ``reassert_interval`` seconds. If
-    the tunnel drops, rebuild it and resume — this is the whole point of the
+    the tunnel drops, rebuild it and resume - this is the whole point of the
     function, so a flaky cable or a brief device hiccup doesn't kill the spoof.
 
     :param lockdown_client: a trusted lockdown client (from ``device.connect``).
@@ -136,7 +136,7 @@ async def hold_location(lockdown_client, coordinate_source, stop_event, *,
         ``connected``, ``reconnected``, ``asserting``, ``connection_lost``,
         ``cleared``, ``clear_failed``.
     :param wake_event: optional ``asyncio.Event`` that, when set, makes the loop
-        stop waiting and re-read ``coordinate_source`` immediately — so a live
+        stop waiting and re-read ``coordinate_source`` immediately - so a live
         retarget (a new map click) takes effect at once instead of on the next
         tick. The loop clears it after acting on it.
     """
@@ -157,11 +157,11 @@ async def hold_location(lockdown_client, coordinate_source, stop_event, *,
                     emit, wake_event,
                 )
                 # We only fall out of the assert loop when a stop was requested
-                # while the session is healthy — clear cleanly before teardown.
+                # while the session is healthy - clear cleanly before teardown.
                 await _clear_best_effort(location_simulation, emit)
                 return
         except RootRequiredError:
-            # Not a transient drop — the caller forgot sudo. Let it surface.
+            # Not a transient drop - the caller forgot sudo. Let it surface.
             raise
         except RECOVERABLE_ERRORS as error:
             if stop_event.is_set():
@@ -189,7 +189,7 @@ async def _assert_until_stopped(location_simulation, coordinate_source, stop_eve
                                 emit, wake_event=None):
     """Re-send the current coordinate every ``interval`` seconds until stopped.
 
-    A ``None`` from ``coordinate_source`` means "nothing to assert yet" — we
+    A ``None`` from ``coordinate_source`` means "nothing to assert yet" - we
     just idle-wait, keeping the tunnel open. A set ``wake_event`` cuts the wait
     short so a fresh target is asserted immediately.
 

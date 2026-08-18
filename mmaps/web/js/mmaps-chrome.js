@@ -1,5 +1,5 @@
 /**
- * MMapsChrome — Stream 3: panel open/close + chrome stacking helpers.
+ * MMapsChrome - Stream 3: panel open/close + chrome stacking helpers.
  *
  * Contract:
  *   • Panel visibility uses ONE source of truth: CSS class `open` only.

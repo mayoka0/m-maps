@@ -1,6 +1,6 @@
 """Device detection, trust (pairing), and Developer Mode handling.
 
-Everything here talks to the phone over USB through usbmuxd/lockdownd — no
+Everything here talks to the phone over USB through usbmuxd/lockdownd - no
 tunnel, no root required. The iOS 17+ tunnel (needed only to *move* the
 location) lives in location.py.
 """
@@ -29,7 +29,7 @@ def pairing_cache_dir() -> Path:
     """Where pymobiledevice3 caches pair records.
 
     When this process is run under `sudo`, `Path.home()` resolves to root's
-    home directory instead of the invoking user's — which would make every
+    home directory instead of the invoking user's - which would make every
     sudo invocation look like a fresh, untrusted device even after the user
     already tapped "Trust". We instead resolve the real invoking user's home
     (via $SUDO_USER) so the same cache is used whether or not we're root.
@@ -55,7 +55,7 @@ async def connect(
     """Connect to a USB-attached device over lockdownd.
 
     :param autopair: if True and the device isn't paired yet, actively request
-        pairing — this is what makes the "Trust This Computer?" dialog appear.
+        pairing - this is what makes the "Trust This Computer?" dialog appear.
     :param serial: usbmux serial (UDID) of the target phone, or ``None`` for
         the first USB device. Prefer an explicit serial when the user confirmed
         a specific phone (two devices on one Mac).
@@ -96,7 +96,7 @@ async def connect(
 async def get_status(client) -> dict:
     """Collect the human-facing facts about the connected device.
 
-    Developer Mode status requires a trusted/paired connection to read — if
+    Developer Mode status requires a trusted/paired connection to read - if
     the device isn't trusted yet, we report it as unknown rather than guess.
     """
     status = {
@@ -130,7 +130,7 @@ async def ensure_trusted(client, *, serial: Optional[str] = None, interactive: b
 
     When not already paired, reconnects with ``autopair=True`` so iOS shows
     "Trust This Computer?". Works headless (desktop app / elevated server):
-    no stdin required — just waits for the phone dialog.
+    no stdin required - just waits for the phone dialog.
 
     :param interactive: if True, print CLI guidance (``serve`` / terminal).
     :returns: a (possibly reconnected) paired client.
@@ -194,7 +194,7 @@ async def ensure_developer_mode(
     """Make sure Developer Mode is on.
 
     Returns True if Developer Mode ends up enabled, False otherwise.
-    Headless (desktop) path never uses ``input()`` — it only reports status
+    Headless (desktop) path never uses ``input()`` - it only reports status
     (and may still auto-enable when ``auto_enable=True`` without a prompt).
     """
     try:
@@ -222,7 +222,7 @@ async def ensure_developer_mode(
             _print_manual_developer_mode_steps()
             return False
         print("Requesting Developer Mode... the iPhone will reboot. Keep it plugged in.")
-    # Desktop / elevated: no stdin — request enable when auto_enable is True.
+    # Desktop / elevated: no stdin - request enable when auto_enable is True.
     # AmfiService handles reboot + reconnect when enable_post_restart=True.
 
     try:

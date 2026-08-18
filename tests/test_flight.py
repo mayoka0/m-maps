@@ -1,4 +1,5 @@
 """Offline tests for great-circle flight math (no phone)."""
+import math
 import random
 
 from mmaps.flight import (
@@ -21,6 +22,12 @@ def test_gc_interpolate_midpoint_shorter_than_corners():
     assert abs(d_half - d_full) < d_full * 0.02
 
 
+def test_gc_interpolate_antipodal_points_stays_finite():
+    midpoint = gc_interpolate((0.0, 0.0), (0.0, 180.0), 0.5)
+    assert all(-180.0 <= value <= 180.0 for value in midpoint)
+    assert all(math.isfinite(value) for value in midpoint)
+
+
 def test_resample_flight_empty_single():
     assert resample_flight([]) == []
     pts = resample_flight([[2.0, 48.0]], jitter_m=0)
@@ -37,7 +44,7 @@ def test_resample_flight_ends_at_destination():
 
 
 def test_no_time_compression_multipliers():
-    # Presets are mild scales around real cruise, not 60–240× playback.
+    # Presets are mild scales around real cruise, not 60-240× playback.
     assert SPEED_PRESETS["normal"] == 1.0
     assert all(0.5 <= v <= 1.5 for v in SPEED_PRESETS.values())
     assert 800 <= effective_speed_kmh("normal") <= 950

@@ -6,7 +6,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        Ideas welcome. Keep the scope realistic for a personal USB spoofing tool —
+        Ideas welcome. Keep the scope realistic for a personal USB spoofing tool -
         the focus is harmless pranks, not stealth or evasion.
 
   - type: textarea
